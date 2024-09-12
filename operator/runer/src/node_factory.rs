@@ -79,7 +79,7 @@ impl OperatorFactory {
 
     pub async fn initialize_node(self) -> OperatorResult<OperatorArc> {
         let arc_operator = OperatorFactory::create_operator(self.config.clone()).await?;
-        OperatorFactory::create_ws_node(arc_operator.clone()).await;
+        //OperatorFactory::create_ws_node(arc_operator.clone()).await;
 
         let (tx, rx) = oneshot::channel();
         let _task = tokio::task::spawn(async move {

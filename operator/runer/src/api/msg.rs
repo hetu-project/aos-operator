@@ -7,12 +7,15 @@ use node_api::config::OperatorConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::net::{SocketAddr, TcpStream};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 use verify_hub::opml::{handler::opml_question_handler, model::OpmlRequest};
-use websocket::{ReceiveMessage, WebsocketReceiver, WebsocketSender, WireMessage};
+use websocket::{
+    connect, ReceiveMessage, WebsocketConfig, WebsocketReceiver, WebsocketSender, WireMessage,
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ConnectRequest(pub Vec<ConnectParam>);
@@ -93,7 +96,6 @@ pub struct WorkerResponse {
     pub result: Value,
 }
 
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerResult {
     pub answer: String,
@@ -101,7 +103,7 @@ pub struct WorkerResult {
     pub node_id: String,
     pub prompt: String,
     pub req_id: String,
-    pub state_root: String
+    pub state_root: String,
 }
 
 pub async fn connect_dispatcher(sender: &WebsocketSender) {
@@ -182,14 +184,24 @@ async fn demo(_msg: DispatchJobRequest, tx: oneshot::Sender<Value>, op: Operator
         req_id: "".to_owned(),
         callback: "http://127.0.0.1:21001/api/opml_callback".to_owned(),
     };
-    let qest = opml_question_handler(state.unwrap(), opml_request).await.unwrap();
-    let worker_response:WorkerResponse = serde_json::from_value(qest).unwrap();
-    let worker_result:WorkerResult = serde_json::from_value(worker_response.result).unwrap();
+    let qest = opml_question_handler(state.unwrap(), opml_request)
+        .await
+        .unwrap();
+    let worker_response: WorkerResponse = serde_json::from_value(qest).unwrap();
+    let worker_result: WorkerResult = serde_json::from_value(worker_response.result).unwrap();
 
     let res = JobResultRequest(vec![JobResultParam {
         job_id: job_id,
         result: worker_result.answer,
-        clock: HashMap::from([(clk_id.to_owned(),clk_val.parse::<u16>().unwrap().checked_add(1).unwrap().to_string())]),
+        clock: HashMap::from([(
+            clk_id.to_owned(),
+            clk_val
+                .parse::<u16>()
+                .unwrap()
+                .checked_add(1)
+                .unwrap()
+                .to_string(),
+        )]),
         operator: String::from_str("operator1").unwrap(),
         signature: String::from_str("signature").unwrap(),
     }]);
@@ -230,44 +242,67 @@ async fn handle_dispatchjobs(
 }
 
 pub async fn handle_connection(_operator: OperatorArc) {
-    let sender = _operator.lock().await.sender.take().unwrap();
-    let mut receiver = _operator.lock().await.receiver.take().unwrap();
+    //let socket = SocketAddr::from_str("13.215.49.139:3000").unwrap();
+    //let socket = SocketAddr::from_str("127.0.0.1:8080").unwrap();
+    let mut retry_count = 0;
+    loop {
+        let socket = SocketAddr::from_str("127.0.0.1:8080").unwrap();
+        match connect(Arc::new(WebsocketConfig::default()), socket).await {
+            Ok((sender, mut receiver)) => {
+                let (tx, rx) = mpsc::channel(1);
 
-    let (tx, rx) = mpsc::channel(1);
+                let r_task = tokio::task::spawn(async move {
+                    //while let Ok(msg) = receiver.recv().await {
+                    loop {
+                        match receiver.recv().await {
+                            Ok(msg) => {
+                                info!("<-- {:?}", msg);
+                                retry_count = 0;
 
-    let r_task = tokio::task::spawn(async move {
-        while let Ok(msg) = receiver.recv().await {
-            info!("<-- {:?}", msg);
+                                match msg {
+                                    ReceiveMessage::Signal(s) => println!("{s:?}"),
+                                    ReceiveMessage::Request(id, m, p, r) => {
+                                        match m.as_str() {
+                                            "dispatch_job" => tx.send((id, p)).await.unwrap(),
+                                            &_ => panic!("on way"),
+                                        };
 
-            match msg {
-                ReceiveMessage::Signal(s) => println!("{s:?}"),
-                ReceiveMessage::Request(id, m, p, r) => {
-                    match m.as_str() {
-                        "dispatch_job" => tx.send((id, p)).await.unwrap(),
-                        &_ => panic!("on way"),
-                    };
+                                        let rep = serde_json::to_value(DispatchJobResponse {
+                                            code: 200,
+                                            message: String::from_str("success").unwrap(),
+                                        })
+                                        .unwrap();
 
-                    let rep = serde_json::to_value(DispatchJobResponse {
-                        code: 200,
-                        message: String::from_str("success").unwrap(),
-                    })
-                    .unwrap();
-
-                    if let Err(e) = r.respond(rep).await {
-                        println!("Failed to send message: {:?}", e);
-                        return;
+                                        if let Err(e) = r.respond(rep).await {
+                                            println!("Failed to send message: {:?}", e);
+                                            return;
+                                        }
+                                    }
+                                };
+                            }
+                            Err(_e) => {
+                                info!("here ---");
+                                break;
+                            }
+                        }
                     }
-                }
-            };
+                });
+
+                connect_dispatcher(&sender).await;
+
+                let _operator_clone = _operator.clone();
+                let s_task = tokio::task::spawn(async move {
+                    handle_dispatchjobs(_operator_clone, sender, rx).await;
+                });
+                s_task.await;
+                r_task.await;
+            }
+            Err(_) => {
+                retry_count += 1;
+                let delay = (2_u64).pow(retry_count);
+                println!("Failed to connect, retrying in {} seconds", delay);
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+            }
         }
-    });
-
-    connect_dispatcher(&sender).await;
-
-    let s_task = tokio::task::spawn(async move {
-        handle_dispatchjobs(_operator, sender, rx).await;
-    });
-
-    r_task.await.unwrap();
-    s_task.await.unwrap();
+    }
 }

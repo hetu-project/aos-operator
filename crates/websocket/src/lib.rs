@@ -252,7 +252,7 @@ impl WebsocketReceiver {
     pub async fn recv(&mut self) -> std::io::Result<ReceiveMessage> {
         match self.recv_inner().await {
             Err(err) => {
-                info!("WebsocketReceiver Error");
+                info!("WebsocketReceiver Error: {:?}", err);
                 Err(err)
             }
             Ok(msg) => Ok(msg),
