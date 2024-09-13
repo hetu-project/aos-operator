@@ -12,7 +12,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
-use verify_hub::opml::{handler::opml_question_handler, model::OpmlRequest};
+use verify_hub::opml::{
+    handler::opml_question_handler,
+    model::{OpmlAnswer, OpmlAnswerResponse, OpmlRequest},
+};
+use verify_hub::tee::{
+    handler::tee_question_handler,
+    model::{AnswerReq, Params, QuestionReq},
+};
 use websocket::{
     connect, ReceiveMessage, WebsocketConfig, WebsocketReceiver, WebsocketSender, WireMessage,
 };
@@ -50,6 +57,7 @@ pub struct DispatchJobParam {
 pub struct Job {
     pub model: String,
     pub prompt: String,
+    pub tag: String,
     pub params: JobParams,
 }
 
@@ -66,10 +74,10 @@ pub struct DispatchJobResponse {
     pub message: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 pub struct JobResultRequest(pub Vec<JobResultParam>);
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 pub struct JobResultParam {
     pub job_id: String,
     pub result: String,
@@ -178,33 +186,78 @@ async fn demo(_msg: DispatchJobRequest, tx: oneshot::Sender<Value>, op: Operator
     let _res = vrf_key.run_vrf(vrf_prompt_hash, vrf_precision, vrf_threshold);
     info!("vrf={:?}", _res);
 
-    let opml_request = OpmlRequest {
-        model: "llama-7b".to_owned(),
-        prompt: "what's ai".to_owned(),
-        req_id: "".to_owned(),
-        callback: "http://127.0.0.1:21001/api/opml_callback".to_owned(),
-    };
-    let qest = opml_question_handler(state.unwrap(), opml_request)
-        .await
-        .unwrap();
-    let worker_response: WorkerResponse = serde_json::from_value(qest).unwrap();
-    let worker_result: WorkerResult = serde_json::from_value(worker_response.result).unwrap();
+    let mut res: JobResultRequest = Default::default();
+    match params.job.tag.as_str() {
+        "opml" => {
+            let opml_request = OpmlRequest {
+                model: "llama-7b".to_owned(),
+                prompt: "what's ai".to_owned(),
+                req_id: "".to_owned(),
+                callback: "http://127.0.0.1:21001/api/opml_callback".to_owned(),
+            };
 
-    let res = JobResultRequest(vec![JobResultParam {
-        job_id: job_id,
-        result: worker_result.answer,
-        clock: HashMap::from([(
-            clk_id.to_owned(),
-            clk_val
-                .parse::<u16>()
-                .unwrap()
-                .checked_add(1)
-                .unwrap()
-                .to_string(),
-        )]),
-        operator: String::from_str("operator1").unwrap(),
-        signature: String::from_str("signature").unwrap(),
-    }]);
+            let qest = opml_question_handler(state.unwrap(), opml_request)
+                .await
+                .unwrap();
+            let worker_response: WorkerResponse = serde_json::from_value(qest).unwrap();
+            let worker_result: OpmlAnswer = serde_json::from_value(worker_response.result).unwrap();
+
+            res = JobResultRequest(vec![JobResultParam {
+                job_id: job_id,
+                result: worker_result.answer,
+                clock: HashMap::from([(
+                    clk_id.to_owned(),
+                    clk_val
+                        .parse::<u16>()
+                        .unwrap()
+                        .checked_add(1)
+                        .unwrap()
+                        .to_string(),
+                )]),
+                operator: String::from_str("operator1").unwrap(),
+                signature: String::from_str("signature").unwrap(),
+            }]);
+        }
+        "tee" => {
+            let tee_request = QuestionReq {
+                message: "1".to_owned(),
+                message_id: "1".to_owned(),
+                conversation_id: "1".to_owned(),
+                model: "1".to_owned(),
+                params: Params {
+                    temperature: 1.0,
+                    top_p: 2.0,
+                    max_tokens: 3,
+                },
+                callback_url: "1".to_owned(),
+            };
+            //tee_question_handler();
+
+            let qest = tee_question_handler(state.unwrap(), tee_request)
+                .await
+                .unwrap();
+            let worker_response: WorkerResponse = serde_json::from_value(qest).unwrap();
+            let worker_result: AnswerReq = serde_json::from_value(worker_response.result).unwrap();
+
+            res = JobResultRequest(vec![JobResultParam {
+                job_id: job_id,
+                result: worker_result.answer,
+                clock: HashMap::from([(
+                    clk_id.to_owned(),
+                    clk_val
+                        .parse::<u16>()
+                        .unwrap()
+                        .checked_add(1)
+                        .unwrap()
+                        .to_string(),
+                )]),
+                operator: String::from_str("operator1").unwrap(),
+                signature: String::from_str("signature").unwrap(),
+            }]);
+        }
+        "zk" => panic!("no way"),
+        _ => panic!("no way"),
+    }
 
     tx.send(serde_json::to_value(&res).unwrap()).unwrap();
 }

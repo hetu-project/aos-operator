@@ -18,11 +18,10 @@ pub struct JsonResponse {
     result: String,
 }
 
-#[debug_handler]
 pub async fn tee_question_handler(
-    State(server): State<SharedState>,
-    req: Json<QuestionReq>,
-) -> Json<serde_json::Value> {
+    server: SharedState,
+    req: QuestionReq,
+) -> Option<serde_json::Value> {
     tracing::info!("Handling question {:?}", req);
 
     let uuid = uuid::Uuid::new_v4();
@@ -62,7 +61,7 @@ pub async fn tee_question_handler(
 
     // Poll the database for the answer
     match tokio::time::timeout(Duration::from_secs(600), rx.recv()).await {
-        Ok(Some(answer)) => Json(json!({
+        Ok(Some(answer)) => Some(json!({
             "code": 200,
             "result": answer
         })),
@@ -71,7 +70,7 @@ pub async fn tee_question_handler(
             let mut server = server.0.write().await;
             server.tee_channels.remove(&request_id);
 
-            Json(json!({
+            Some(json!({
                 "code": 408,
                 "result": "Request timed out"
             }))
