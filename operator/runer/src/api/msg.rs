@@ -48,7 +48,9 @@ pub struct DispatchJobParam {
     pub user: String,
     pub seed: String,
     pub signature: String,
+    pub tag: String,
     pub clock: HashMap<String, String>,
+    pub position: String,
     pub job_id: String,
     pub job: Job,
 }
@@ -63,8 +65,8 @@ pub struct Job {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JobParams {
-    pub temperature: f64, //TODO String
-    pub top_p: String,
+    pub temperature: f64,
+    pub top_p: f64,
     pub max_tokens: u64,
 }
 
@@ -299,7 +301,8 @@ pub async fn handle_connection(_operator: OperatorArc) {
     //let socket = SocketAddr::from_str("127.0.0.1:8080").unwrap();
     let mut retry_count = 0;
     loop {
-        let socket = SocketAddr::from_str("127.0.0.1:8080").unwrap();
+        //let socket = SocketAddr::from_str("127.0.0.1:8081").unwrap();
+        let socket = SocketAddr::from_str("13.215.49.139:3000").unwrap();
         match connect(Arc::new(WebsocketConfig::default()), socket).await {
             Ok((sender, mut receiver)) => {
                 let (tx, rx) = mpsc::channel(1);

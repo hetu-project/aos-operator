@@ -71,14 +71,17 @@ async fn test() {
                     user: String::from_str("AI").unwrap(),
                     seed: String::from_str("abc").unwrap(),
                     signature: String::from_str("signature").unwrap(),
+                    tag: "malicious".to_owned(),
                     clock: map,
+                    position: "before".to_owned(),
                     job_id: String::from_str("1").unwrap(),
                     job: Job {
                         model: String::from_str("2").unwrap(),
                         prompt: String::from_str("3").unwrap(),
+                        tag: "opml".to_owned(),
                         params: JobParams {
                             temperature: 1.0,
-                            top_p: String::from_str("5").unwrap(),
+                            top_p: 5.0,
                             max_tokens: 100,
                         },
                     },
