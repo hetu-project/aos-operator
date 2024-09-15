@@ -1,31 +1,30 @@
+use crate::api::vrf_key::VRFPrivKey;
 use crate::{node_factory::OperatorFactory, storage::Storage};
 use alloy_primitives::B256;
 use alloy_wrapper::contracts::vrf_range::OperatorRangeContract;
 use node_api::config::OperatorConfig;
-use tee_llm::nitro_llm::{AnswerResp, TEEReq};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use std::collections::{BTreeMap, VecDeque};
-use std::{cmp, sync::Arc};
-use tokio::sync::RwLock;
-use tracing::*;
+use std::collections::VecDeque;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
+use verify_hub::server::server::SharedState;
+use websocket::*;
 
 pub struct Operator {
     pub config: Arc<OperatorConfig>,
     pub storage: Storage,
     pub state: RwLock<ServerState>,
-    pub tee_inference_sender: UnboundedSender<TEEReq>, 
+    pub vrf_key: Arc<VRFPrivKey>,
     pub vrf_range_contract: OperatorRangeContract,
+    pub sender: Option<WebsocketSender>,
+    pub receiver: Option<WebsocketReceiver>,
+    pub hub_state: Option<SharedState>,
 }
 
-pub type OperatorArc = Arc<Operator>;
+pub type OperatorArc = Arc<Mutex<Operator>>;
 
 impl Operator {
     pub fn operator_factory() -> OperatorFactory {
         OperatorFactory::init()
-    }
-
-    pub fn update_tee_sender(mut self, sender: UnboundedSender<TEEReq>) {
-        self.tee_inference_sender = sender;
     }
 }
 

@@ -5,11 +5,15 @@ edition = "2021"
 
 [dependencies]
 common = { path = "../../crates/common"}
+rand = { version = "0.8.5" }
+num-bigint = "0.4.6"
 tools = { version = "0.1.0", path = "../../crates/tools" }
 node_api = {version ="0.1.0", path = "../node_api" }
 db_sql ={version = "0.1.0", path = "../db_sql" }
-tee_llm ={version = "0.1.0", path = "../../tee_llm" }
 alloy-wrapper = { path = "../../crates/alloy-wrapper"}
+websocket = {path = "../../crates/websocket"}
+vrf = { path = "../../crates/vrf"}
+verify_hub = { path = "../verify_hub"}
 structopt = "0.3.11"
 tracing = "0.1.40"
 base64 = "0.13"

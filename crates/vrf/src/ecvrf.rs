@@ -42,16 +42,20 @@
 //! let output: Output = (&proof).into();
 //! ```
 
-use failure::bail;
 use crate::traits::*;
 use core::convert::TryFrom;
 use curve25519_dalek::{
-    constants::ED25519_BASEPOINT_POINT, digest::Update, edwards::{CompressedEdwardsY, EdwardsPoint}, scalar::Scalar as ed25519_Scalar
+    constants::ED25519_BASEPOINT_POINT,
+    digest::Update,
+    edwards::{CompressedEdwardsY, EdwardsPoint},
+    scalar::Scalar as ed25519_Scalar,
 };
 use derive_deref::Deref;
 use ed25519_dalek::{
-    self, Digest, VerifyingKey as ed25519_PublicKey, SecretKey as ed25519_PrivateKey, SigningKey, Sha512,
+    self, Digest, SecretKey as ed25519_PrivateKey, Sha512, SigningKey,
+    VerifyingKey as ed25519_PublicKey,
 };
+use failure::bail;
 use serde::{Deserialize, Serialize};
 
 const SUITE: u8 = 0x03;
@@ -122,9 +126,9 @@ impl Uniform for VRFPrivateKey {
 }
 
 impl VRFPrivateKey {
-    pub fn generate_keypair<R>(rng: &mut R) -> Self 
-    where 
-    R: ::rand::RngCore + ::rand::CryptoRng,
+    pub fn generate_keypair<R>(rng: &mut R) -> Self
+    where
+        R: ::rand::RngCore + ::rand::CryptoRng,
     {
         let sign_key = SigningKey::generate(rng);
         VRFPrivateKey(sign_key.to_bytes())
@@ -138,9 +142,31 @@ impl TryFrom<&[u8]> for VRFPrivateKey {
         let mut bits: [u8; 32] = [0u8; 32];
         bits.copy_from_slice(&bytes[..32]);
         let sign_key = SigningKey::from_bytes(&bits);
-        Ok(VRFPrivateKey(
-            sign_key.to_bytes(),
-        ))
+        Ok(VRFPrivateKey(sign_key.to_bytes()))
+    }
+}
+
+impl TryFrom<&str> for VRFPrivateKey {
+    type Error = CryptoMaterialError;
+
+    fn try_from(hex_str: &str) -> std::result::Result<VRFPrivateKey, CryptoMaterialError> {
+        if hex_str.len() % 2 != 0 {
+            return Err(CryptoMaterialError::WrongLengthError);
+        }
+
+        let bytes: Vec<u8> = match (0..hex_str.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex_str[i..i + 2], 16))
+            .collect()
+        {
+            Ok(x) => x,
+            Err(_e) => return Err(CryptoMaterialError::DeserializationError),
+        };
+
+        let mut bits: [u8; 32] = [0u8; 32];
+        bits.copy_from_slice(&bytes[..32]);
+        let sign_key = SigningKey::from_bytes(&bits);
+        Ok(VRFPrivateKey(sign_key.to_bytes()))
     }
 }
 
@@ -177,7 +203,7 @@ impl VRFPublicKey {
         let h_point = self.hash_to_curve(alpha);
         let pk_point = CompressedEdwardsY::from_slice(self.as_bytes())
             .unwrap()
-            .decompress() 
+            .decompress()
             .unwrap();
         let cprime = hash_points(&[
             h_point,
@@ -197,7 +223,7 @@ impl VRFPublicKey {
         let mut result = [0u8; 32];
         let mut counter = 0;
         let mut wrapped_point: Option<EdwardsPoint> = None;
-        
+
         while wrapped_point.is_none() {
             let mut hasher = Sha512::new();
             Digest::update(&mut hasher, &[SUITE, ONE]);
@@ -205,10 +231,12 @@ impl VRFPublicKey {
             Digest::update(&mut hasher, alpha);
             Digest::update(&mut hasher, &[counter]);
             let hash_result = hasher.finalize();
-            
+
             result.copy_from_slice(&hash_result[..32]);
-    
-            wrapped_point = CompressedEdwardsY::from_slice(&result).unwrap().decompress();
+
+            wrapped_point = CompressedEdwardsY::from_slice(&result)
+                .unwrap()
+                .decompress();
             counter += 1;
         }
 

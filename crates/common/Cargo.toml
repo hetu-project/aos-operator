@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-nitro-enclaves = ["aws-nitro-enclaves-nsm-api", "aws-nitro-enclaves-attestation"]
 
 [dependencies]
 derive_more = "0.99.17"
@@ -30,8 +29,6 @@ futures = "0.3.30"
 tools ={ path = "../tools"}
 primitive-types = { version = "0.12.2", features = ["serde"] }
 anyhow = { version = "1.0.79", features = ["backtrace"] }
-aws-nitro-enclaves-nsm-api = { version = "0.4.0", optional = true }
-aws-nitro-enclaves-attestation = { git = "https://github.com/neatsys/aws-nitro-enclaves-attestation", version = "0.1.0", optional = true }
 
 [lints]
 workspace = true

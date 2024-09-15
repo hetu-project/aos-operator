@@ -1,6 +1,7 @@
 use alloy::{
-    primitives::{U256, address},
-    providers::ProviderBuilder, sol,
+    primitives::{address, U256},
+    providers::ProviderBuilder,
+    sol,
 };
 use eyre::Result;
 
@@ -15,11 +16,11 @@ sol!(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let endpoint = reqwest::Url::parse("https://rpc.holesky.ethpandaops.io")?;
+    let endpoint = reqwest::Url::parse("https://ethereum-holesky-rpc.publicnode.com")?;
     let provider = ProviderBuilder::new().on_http(endpoint);
 
     // Create a contract instance.
-    let contract  = OperatorRangeManager::new(
+    let contract = OperatorRangeManager::new(
         "0x0a24a30E5a8Ca9B790c7f57F0826159569e8dc4B".parse()?,
         provider,
     );
@@ -43,7 +44,10 @@ async fn main() -> Result<()> {
     let OperatorRangeManager::operatorRangesReturn { start, end } =
         contract.operatorRanges(query_addr).call().await?;
 
-    println!("Operator 0xcbee70d449ac3421138fb21cccd156456958baa4 ragnes: {:?}-{:?}", start, end);
+    println!(
+        "Operator 0xcbee70d449ac3421138fb21cccd156456958baa4 ragnes: {:?}-{:?}",
+        start, end
+    );
 
     Ok(())
 }

@@ -1,7 +1,6 @@
-pub mod types;
-pub mod ordinary_clock;
 pub mod crypto;
-pub mod nitro_secure;
+pub mod ordinary_clock;
+pub mod types;
 
 pub fn add(left: usize, right: usize) -> usize {
     left + right

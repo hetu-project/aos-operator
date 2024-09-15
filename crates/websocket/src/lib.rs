@@ -1,34 +1,30 @@
 #[cfg(test)]
 mod test;
 
-use std::io::Error;
-use std::sync::Arc;
+use futures::{SinkExt, StreamExt};
 use log::info;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::io::Error;
+use std::net::SocketAddr;
+use std::str::FromStr;
+use std::sync::Arc;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
-use futures::{SinkExt, StreamExt};
-use serde::{Serialize, Deserialize};
+use url::Url;
 
-#[derive(Debug,Serialize, Deserialize)]
-pub enum WireMessage {
-    /// A message without a response.
-    Signal {
-        data: Vec<u8>,
-    },
-
-    /// A request that requires a response.
-    Request {
-        /// The id of this request.
-        id: u64,
-        data: Vec<u8>,
-    },
-
-    /// The response to a request.
-    Response {
-        /// The id of the request that this response is for.
-        id: u64,
-        data: Option<Vec<u8>>,
-    },
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WireMessage {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    pub address: String,
+    pub hash: String,
+    pub signature: String,
 }
 
 impl WireMessage {
@@ -39,32 +35,40 @@ impl WireMessage {
     }
 
     /// Create a new request message with serde_json message (with new unique msg id).
-    fn request(s: Vec<u8>) -> std::io::Result<(Message, u64)>
-    {
+    fn request(f: String, s: Value) -> std::io::Result<(Message, String)> {
         static ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let id = ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let s1 = Self::Request {
-            id,
-            data: s,
+        let s1 = Self {
+            id: id.to_string(),
+            method: Some(f),
+            params: Some(s),
+            result: None,
+            address: "".to_string(),
+            hash: "".to_string(),
+            signature: "".to_string(),
         };
-        let s2 = serde_json::to_vec(&s1).map_err(Error::other)?;
-        Ok((Message::Binary(s2),id))
+        let s2 = serde_json::to_string(&s1).map_err(Error::other)?;
+        Ok((Message::Text(s2), id.to_string()))
     }
 
     /// Create a new response message.
-    fn response(id: u64, s: Vec<u8>) -> std::io::Result<Message>
-    {
-        let s1 = Self::Response {
-            id,
-            data: Some(s),
+    fn response(id: String, s: Value) -> std::io::Result<Message> {
+        let s1 = Self {
+            id: id,
+            method: None,
+            params: None,
+            result: Some(s),
+            address: "".to_string(),
+            hash: "".to_string(),
+            signature: "".to_string(),
         };
-        let s2 = serde_json::to_vec(&s1).map_err(Error::other)?;
-        Ok(Message::Binary(s2))
+        let s2 = serde_json::to_string(&s1).map_err(Error::other)?;
+        Ok(Message::Text(s2))
     }
 }
 
 pub struct WebsocketRespond {
-    id: u64,
+    id: String,
     core: WsCoreSync,
 }
 
@@ -78,8 +82,7 @@ impl std::fmt::Debug for WebsocketRespond {
 
 impl WebsocketRespond {
     /// Respond to an incoming request.
-    pub async fn respond(self, s: Vec<u8>) -> std::io::Result<()>
-    {
+    pub async fn respond(self, s: Value) -> std::io::Result<()> {
         use futures::sink::SinkExt;
         self.core
             .exec(move |_, core| async move {
@@ -88,8 +91,8 @@ impl WebsocketRespond {
                     core.send.lock().await.send(s).await.map_err(Error::other)?;
                     Ok(())
                 })
-                    .await
-                    .map_err(Error::other)?
+                .await
+                .map_err(Error::other)?
             })
             .await
     }
@@ -97,13 +100,12 @@ impl WebsocketRespond {
 
 /// Types of messages that can be received by a WebsocketReceiver.
 #[derive(Debug)]
-pub enum ReceiveMessage
-{
+pub enum ReceiveMessage {
     /// Received a signal from the remote.
     Signal(Vec<u8>),
 
     /// Received a request from the remote.
-    Request(Vec<u8>, WebsocketRespond),
+    Request(String, String, Value, WebsocketRespond),
 }
 
 pub struct WebsocketListener {
@@ -125,7 +127,7 @@ impl WebsocketListener {
         let listener = tokio::net::TcpListener::bind(addr).await?;
 
         let addr = listener.local_addr()?;
-        info!("WebsocketListener Listening {}",addr);
+        info!("WebsocketListener Listening {}", addr);
         Ok(Self { config, listener })
     }
 
@@ -145,24 +147,27 @@ impl WebsocketListener {
 pub struct WebsocketSender(WsCoreSync, std::time::Duration);
 
 impl WebsocketSender {
-    pub async fn request(&self, s: Vec<u8>) -> std::io::Result<Vec<u8>>
-    {
-        self.request_timeout(s, self.1).await
+    pub async fn request(&self, f: String, s: Value) -> std::io::Result<Value> {
+        self.request_timeout(f, s, self.1).await
     }
 
-    pub async fn request_timeout(&self, s: Vec<u8>, timeout: std::time::Duration) -> std::io::Result<Vec<u8>>
-    {
+    pub async fn request_timeout(
+        &self,
+        f: String,
+        s: Value,
+        timeout: std::time::Duration,
+    ) -> std::io::Result<Value> {
         let timeout_at = tokio::time::Instant::now() + timeout;
         use futures::sink::SinkExt;
 
-        let (s, id) = WireMessage::request(s)?;
+        let (s, id) = WireMessage::request(f, s)?;
 
         /// Drop helper to remove our response callback if we timeout.
-        struct D(CallbackMap, u64);
+        struct D(CallbackMap, String);
 
         impl Drop for D {
             fn drop(&mut self) {
-                self.0.remove(self.1);
+                self.0.remove(self.1.clone());
             }
         }
 
@@ -172,19 +177,20 @@ impl WebsocketSender {
             .0
             .exec(move |_, core| async move {
                 // create the drop helper
-                let drop = D(core.callback.clone(), id);
+                let drop = D(core.callback.clone(), id.clone());
 
                 // register the response callback
                 core.callback.insert(id, resp_s);
 
                 tokio::time::timeout_at(timeout_at, async move {
                     // send the actual message
+                    info!("-->raw msg: {s:?}");
                     core.send.lock().await.send(s).await.map_err(Error::other)?;
 
                     Ok(drop)
                 })
-                    .await
-                    .map_err(Error::other)?
+                .await
+                .map_err(Error::other)?
             })
             .await?;
 
@@ -196,10 +202,9 @@ impl WebsocketSender {
 
             Ok(resp)
         })
-            .await
-            .map_err(Error::other)?
+        .await
+        .map_err(Error::other)?
     }
-
 }
 
 #[allow(dead_code)]
@@ -213,6 +218,7 @@ impl WebsocketReceiver {
     fn new(core: WsCoreSync, addr: std::net::SocketAddr) -> Self {
         let core2 = core.clone();
         let ping_task = tokio::task::spawn(async move {
+            /*
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 let core = core2.0.lock().unwrap().as_ref().cloned();
@@ -232,6 +238,7 @@ impl WebsocketReceiver {
                     break;
                 }
             }
+            */
         });
         Self(core, addr, ping_task)
     }
@@ -242,8 +249,7 @@ impl WebsocketReceiver {
     }
 
     /// Receive the next message.
-    pub async fn recv(&mut self) -> std::io::Result<ReceiveMessage>
-    {
+    pub async fn recv(&mut self) -> std::io::Result<ReceiveMessage> {
         match self.recv_inner().await {
             Err(err) => {
                 info!("WebsocketReceiver Error");
@@ -253,8 +259,7 @@ impl WebsocketReceiver {
         }
     }
 
-    async fn recv_inner(&mut self) -> std::io::Result<ReceiveMessage>
-    {
+    async fn recv_inner(&mut self) -> std::io::Result<ReceiveMessage> {
         use futures::sink::SinkExt;
         use futures::stream::StreamExt;
         loop {
@@ -287,23 +292,33 @@ impl WebsocketReceiver {
                         }
                         Message::Frame(_) => return Err(Error::other("UnexpectedRawFrame")),
                     };
-                    match WireMessage::try_from_bytes(msg)? {
-                        WireMessage::Request { id, data } => {
+                    info!(
+                        "<--raw msg: {:?}-{:?}",
+                        WireMessage::try_from_bytes(msg.clone())?,
+                        msg.clone()
+                    );
+                    let recvd = WireMessage::try_from_bytes(msg)?;
+                    match recvd.method {
+                        Some(meth) => {
                             let resp = WebsocketRespond {
-                                id,
+                                id: recvd.id.clone(),
                                 core: core_sync,
                             };
-                            Ok(Some(ReceiveMessage::Request(data, resp)))
+                            Ok(Some(ReceiveMessage::Request(
+                                recvd.id,
+                                meth,
+                                recvd.params.unwrap(),
+                                resp,
+                            )))
                         }
-                        WireMessage::Response { id, data } => {
-                            if let Some(sender) = core.callback.remove(id) {
-                                if let Some(data) = data {
+                        None => {
+                            if let Some(sender) = core.callback.remove(recvd.id) {
+                                if let Some(data) = recvd.result {
                                     let _ = sender.send(Ok(data));
                                 }
                             }
                             Ok(None)
                         }
-                        WireMessage::Signal { data } => Ok(Some(ReceiveMessage::Signal(data))),
                     }
                 })
                 .await?
@@ -314,12 +329,29 @@ impl WebsocketReceiver {
     }
 }
 
-type WsSendSync = Arc<tokio::sync::Mutex<futures::stream::SplitSink<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>, tokio_tungstenite::tungstenite::protocol::Message>>>;
-type WsRecvSync = Arc<tokio::sync::Mutex<futures::stream::SplitStream<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>>>>;
+type WsSendSync = Arc<
+    tokio::sync::Mutex<
+        futures::stream::SplitSink<
+            tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+            tokio_tungstenite::tungstenite::protocol::Message,
+        >,
+    >,
+>;
+type WsRecvSync = Arc<
+    tokio::sync::Mutex<
+        futures::stream::SplitStream<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>>,
+    >,
+>;
 
 #[derive(Clone)]
 #[allow(clippy::type_complexity)]
-struct CallbackMap(Arc<std::sync::Mutex<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<std::io::Result<Vec<u8>>>>>>);
+struct CallbackMap(
+    Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<String, tokio::sync::oneshot::Sender<std::io::Result<Value>>>,
+        >,
+    >,
+);
 
 impl CallbackMap {
     pub fn close(&self) {
@@ -330,11 +362,14 @@ impl CallbackMap {
         }
     }
 
-    pub fn insert(&self, id: u64, sender: tokio::sync::oneshot::Sender<std::io::Result<Vec<u8>>>) {
+    pub fn insert(&self, id: String, sender: tokio::sync::oneshot::Sender<std::io::Result<Value>>) {
         self.0.lock().unwrap().insert(id, sender);
     }
 
-    pub fn remove(&self, id: u64) -> Option<tokio::sync::oneshot::Sender<std::io::Result<Vec<u8>>>> {
+    pub fn remove(
+        &self,
+        id: String,
+    ) -> Option<tokio::sync::oneshot::Sender<std::io::Result<Value>>> {
         self.0.lock().unwrap().remove(&id)
     }
 }
@@ -364,9 +399,9 @@ impl WsCoreSync {
     }
 
     pub async fn exec<F, C, R>(&self, c: C) -> std::io::Result<R>
-        where
-            F: std::future::Future<Output=std::io::Result<R>>,
-            C: FnOnce(WsCoreSync, WsCore) -> F,
+    where
+        F: std::future::Future<Output = std::io::Result<R>>,
+        C: FnOnce(WsCoreSync, WsCore) -> F,
     {
         let core = match self.0.lock().unwrap().as_ref() {
             Some(core) => core.clone(),
@@ -395,7 +430,9 @@ fn split(
     let core = WsCore {
         send: Arc::new(tokio::sync::Mutex::new(sink)),
         recv: Arc::new(tokio::sync::Mutex::new(stream)),
-        callback: CallbackMap(Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()))),
+        callback: CallbackMap(Arc::new(std::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        ))),
         timeout,
     };
 
@@ -408,8 +445,9 @@ fn split(
     ))
 }
 
-
-pub async fn listening(listener: tokio::net::TcpListener) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn listening(
+    listener: tokio::net::TcpListener,
+) -> Result<(), Box<dyn std::error::Error>> {
     while let Ok((stream, _)) = listener.accept().await {
         let ws_stream = accept_async(stream).await?;
         tokio::spawn(async move {
@@ -453,7 +491,6 @@ impl WebsocketConfig {
         max_frame_size: 16 << 20,
     };
 
-
     /// Internal convert to tungstenite config.
     pub(crate) fn to_tungstenite(
         self,
@@ -478,7 +515,8 @@ pub async fn connect(
 ) -> std::io::Result<(WebsocketSender, WebsocketReceiver)> {
     let stream = tokio::net::TcpStream::connect(addr).await?;
     let peer_addr = stream.peer_addr()?;
-    let url = format!("ws://{addr}");
+    let url = format!("ws://{addr}/ws");
+    info!("ws url: {:?}", url);
     let (stream, _addr) =
         tokio_tungstenite::client_async_with_config(url, stream, Some(config.to_tungstenite()))
             .await

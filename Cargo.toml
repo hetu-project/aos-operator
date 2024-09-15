@@ -7,11 +7,9 @@ members = [
     "crates/alloy-wrapper",
     "crates/tools",
     "crates/vrf",
-    "tee_vlc",
-    "tee_llm", 
     "operator/node_api",
     "operator/db_sql",
-    "operator/runer",
+    "operator/runer", "operator/verify_hub",
 ]
 
 exclude = []

@@ -1,9 +1,8 @@
-mod handler;
+mod api;
+mod cli;
 mod node_factory;
 mod operator;
 mod storage;
-mod api;
-mod cli;
 
 use cli::operator::run_cli;
 use tools::tokio_static;

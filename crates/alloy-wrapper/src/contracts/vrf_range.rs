@@ -62,8 +62,14 @@ pub async fn get_range_by_address(
     Ok(th)
 }
 
+pub async fn get_range_by_address2(
+    contract: OperatorRangeContract,
+    query_addr: Address,
+) -> Result<(u64, u64)> {
+    let OperatorRangeManager::operatorRangesReturn { start, end } =
+        contract.operatorRanges(query_addr).call().await?;
 
-
-
-
-    
+    debug!("Operator {:?} ragnes: {:?}-{:?}", query_addr, start, end);
+    let threshold = start - end;
+    Ok((start.try_into()?, end.try_into()?))
+}

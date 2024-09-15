@@ -1,8 +1,10 @@
+use crate::api::msg::{connect_dispatcher, handle_connection, job_result};
 use crate::operator::Operator;
 use crate::operator::OperatorArc;
 use node_api::config;
 use node_api::config::OperatorConfig;
 use node_api::error::{ErrorCodes, OperatorConfigError};
+use std::sync::Arc;
 use structopt::StructOpt;
 use tracing::*;
 
@@ -64,6 +66,9 @@ pub async fn run_cli() {
         let operator_config = construct_node_config(config_path.clone());
 
         let _operator = build_operator(operator_config.clone()).await;
+
+        let arc_operator_clone = Arc::clone(&_operator);
+        handle_connection(arc_operator_clone).await;
     }
 
     if help_info {
