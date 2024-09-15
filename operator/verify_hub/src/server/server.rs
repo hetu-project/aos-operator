@@ -1,5 +1,7 @@
 use axum::http::Method;
 use axum::routing::get;
+use std::time::Duration;
+use axum::error_handling::HandleErrorLayer;
 use axum::{routing::post, Router};
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::PgConnection;
@@ -12,6 +14,9 @@ use std::env;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tower_http::cors::{Any, CorsLayer};
+use tower::ServiceBuilder;
+use tower_http::trace::TraceLayer;
+
 
 use crate::config::Config;
 use crate::opml::handler::*;
@@ -102,8 +107,10 @@ impl Server {
         tracing::info!("Sending opml request {:?}", req);
         let client = reqwest::Client::new();
         let opml_server_url = format!("{}/api/v1/question", "http://127.0.0.1:1234");
+        tracing::info!("{:?}", opml_server_url);
 
         let response = client.post(opml_server_url).json(&req).send().await?;
+        tracing::info!("{:?}", response);
 
         if response.status().is_success() {
             Ok(())
@@ -114,6 +121,7 @@ impl Server {
 }
 
 pub async fn run(url: &str, tx: tokio::sync::oneshot::Sender<SharedState>) {
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST])
@@ -125,12 +133,18 @@ pub async fn run(url: &str, tx: tokio::sync::oneshot::Sender<SharedState>) {
 
     // build our application with a single route
     let app = Router::new()
-        .route("/ping", get(|| async { "pong" }))
+        .route("/ping", get(|| async { tracing::info!("<-- ping");"pong" }))
         .route("/reister_worker", post(register_worker))
         .route("/receive_heart_beat", post(receive_heart_beat))
         .route("/api/tee_callback", post(tee_callback))
         .route("/api/opml_callback", post(opml_callback))
         .layer(cors)
+        .layer(
+            ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(handle_error))
+            .timeout(Duration::from_secs(600))
+            .layer(TraceLayer::new_for_http())
+        )
         .with_state(server);
 
     tx.send(server_clone).unwrap();

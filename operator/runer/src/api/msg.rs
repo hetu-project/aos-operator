@@ -70,6 +70,7 @@ pub struct JobResultRequest(pub Vec<JobResultParam>);
 pub struct JobResultParam {
     pub job_id: String,
     pub result: String,
+    pub clock: HashMap<String, String>,
     pub operator: String,
     pub signature: String,
 }
@@ -84,6 +85,23 @@ pub struct JobResultResponse {
 pub struct WsResponse {
     pub code: u16,
     pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WorkerResponse {
+    pub code: u16,
+    pub result: Value,
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WorkerResult {
+    pub answer: String,
+    pub model: String,
+    pub node_id: String,
+    pub prompt: String,
+    pub req_id: String,
+    pub state_root: String
 }
 
 pub async fn connect_dispatcher(sender: &WebsocketSender) {
@@ -142,7 +160,9 @@ async fn demo(_msg: DispatchJobRequest, tx: oneshot::Sender<Value>, op: Operator
 
     //TODO loop
     let params = &_msg.0[0];
-
+    let job_id = params.job_id.clone();
+    info!("dispatch params:{params:?}");
+    let (clk_id, clk_val) = params.clock.get_key_value("1").unwrap();
     let range = match params.user.as_str() {
         "suspicion" => (start, end),
         "malicious" => (start, end),
@@ -157,16 +177,19 @@ async fn demo(_msg: DispatchJobRequest, tx: oneshot::Sender<Value>, op: Operator
     info!("vrf={:?}", _res);
 
     let opml_request = OpmlRequest {
-        model: "llama".to_owned(),
+        model: "llama-7b".to_owned(),
         prompt: "what's ai".to_owned(),
-        req_id: "1".to_owned(),
-        callback: "url".to_owned(),
+        req_id: "".to_owned(),
+        callback: "http://127.0.0.1:21001/api/opml_callback".to_owned(),
     };
-    opml_question_handler(state.unwrap(), opml_request).await;
+    let qest = opml_question_handler(state.unwrap(), opml_request).await.unwrap();
+    let worker_response:WorkerResponse = serde_json::from_value(qest).unwrap();
+    let worker_result:WorkerResult = serde_json::from_value(worker_response.result).unwrap();
 
     let res = JobResultRequest(vec![JobResultParam {
-        job_id: String::from_str("1").unwrap(),
-        result: String::from_str("abc").unwrap(),
+        job_id: job_id,
+        result: worker_result.answer,
+        clock: HashMap::from([(clk_id.to_owned(),clk_val.parse::<u16>().unwrap().checked_add(1).unwrap().to_string())]),
         operator: String::from_str("operator1").unwrap(),
         signature: String::from_str("signature").unwrap(),
     }]);

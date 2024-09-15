@@ -68,8 +68,8 @@ impl OperatorFactory {
     async fn create_ws_node(arc_operator: OperatorArc) {
         let _arc_operator_clone = Arc::clone(&arc_operator);
 
-        //let socket = SocketAddr::from_str("13.215.49.139:3000").unwrap();
-        let socket = SocketAddr::from_str("127.0.0.1:8080").unwrap();
+        let socket = SocketAddr::from_str("13.215.49.139:3000").unwrap();
+        //let socket = SocketAddr::from_str("127.0.0.1:8080").unwrap();
         let (send, mut recv) = connect(Arc::new(WebsocketConfig::default()), socket)
             .await
             .unwrap();
@@ -83,7 +83,7 @@ impl OperatorFactory {
 
         let (tx, rx) = oneshot::channel();
         let _task = tokio::task::spawn(async move {
-            server::run("0.0.0.0:3000", tx).await;
+            server::run("0.0.0.0:21001", tx).await;
         });
 
         let server = rx.await.unwrap();

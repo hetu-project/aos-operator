@@ -49,7 +49,7 @@ async fn test() {
         .with_env_filter(EnvFilter::new(rust_log))
         .init();
     let s_task = tokio::task::spawn(async move {
-        let s = WebsocketListener::bind(Arc::new(WebsocketConfig::default()), "127.0.0.1:8080")
+        let s = WebsocketListener::bind(Arc::new(WebsocketConfig::default()), "127.0.0.1:8081")
             .await
             .unwrap();
 
