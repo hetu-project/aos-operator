@@ -134,13 +134,14 @@ async fn do_opml_job(
     user: String,
     job_id: String,
     tag: String,
+    callback: String,
     clock: &HashMap<String, String>,
 ) -> JobResultRequest {
     let opml_request = OpmlRequest {
         model,
         prompt,
         req_id: "".to_owned(),
-        callback: "http://127.0.0.1:21001/api/opml_callback".to_owned(),
+        callback: callback,
     };
 
     let qest = opml_question_handler(state, opml_request).await.unwrap();
@@ -157,7 +158,7 @@ async fn do_opml_job(
         user,
         job_id,
         tag,
-        result: worker_result.answer,
+        result: worker_result.answer[..=worker_result.answer.rfind('.').unwrap()].to_string(),
         clock: HashMap::from([(
             clk_id.to_owned(),
             clk_val
@@ -275,6 +276,7 @@ async fn do_job(id: String, msg: DispatchJobRequest, tx: WebsocketSender, op: Op
     let _res = vrf_key.run_vrf(vrf_prompt_hash, vrf_precision, vrf_threshold);
     info!("vrf={:?}", _res);
 
+    let callback = config.net.callback_url.clone();
     let mut res: JobResultRequest = Default::default();
     match params.job.tag.as_str() {
         "opml" => {
@@ -285,6 +287,7 @@ async fn do_job(id: String, msg: DispatchJobRequest, tx: WebsocketSender, op: Op
                 user,
                 job_id,
                 tag,
+                callback,
                 &params.clock,
             )
             .await

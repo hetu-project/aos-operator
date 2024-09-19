@@ -9,9 +9,10 @@ queue:
   # "13.215.49.139:3000"
   queue_url: "redis://:@127.0.0.1:6379/"
 net:
-  rest_url: "0.0.0.0:8080"
+  rest_url: "0.0.0.0:21001"
   outer_url: "http://127.0.0.1:8080"
   dispatcher_url: "127.0.0.1:8081"
+  callback_url: "http://127.0.0.1:21001/api/opml_callback"
   tee_llm_cid: 15
   tee_llm_port: 5005
 node:

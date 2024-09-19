@@ -79,11 +79,11 @@ impl OperatorFactory {
 
     pub async fn initialize_node(self) -> OperatorResult<OperatorArc> {
         let arc_operator = OperatorFactory::create_operator(self.config.clone()).await?;
-        //OperatorFactory::create_ws_node(arc_operator.clone()).await;
+        let config = arc_operator.lock().await.config.clone();
 
         let (tx, rx) = oneshot::channel();
         let _task = tokio::task::spawn(async move {
-            server::run("0.0.0.0:21001", tx).await;
+            server::run(&config.net.rest_url, tx).await;
         });
 
         let server = rx.await.unwrap();

@@ -38,6 +38,7 @@ pub struct NetworkConfig {
     pub rest_url: String,
     pub outer_url: String,
     pub dispatcher_url: String,
+    pub callback_url: String,
     pub tee_llm_cid: u32,
     pub tee_llm_port: u32,
 }
