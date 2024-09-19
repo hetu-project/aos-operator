@@ -13,7 +13,7 @@ use tracing_subscriber::EnvFilter;
 use super::msg::{DispatchJobParam, DispatchJobRequest, Job, JobParams};
 
 fn handle_jobs(msg: Value) -> OperatorAPIResult<Value> {
-    Ok(serde_json::to_value(super::msg::ConnectResponse {
+    Ok(serde_json::to_value(super::msg::WsResponse {
         code: 200,
         message: String::from_str("success2").unwrap(),
     })
@@ -77,7 +77,7 @@ async fn test() {
                     job_id: String::from_str("1").unwrap(),
                     job: Job {
                         model: String::from_str("2").unwrap(),
-                        prompt: String::from_str("3").unwrap(),
+                        prompt: String::from_str("what's AI?").unwrap(),
                         tag: "opml".to_owned(),
                         params: JobParams {
                             temperature: 1.0,

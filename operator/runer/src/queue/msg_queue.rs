@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use redis::aio::ConnectionManager;
+use redis::streams::StreamReadOptions;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -51,8 +52,7 @@ impl From<&str> for RedisMessage {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis()
-                .to_string()
-                + "-0",
+                .to_string(),
             data: data.to_owned(),
         }
     }
@@ -65,8 +65,7 @@ impl From<String> for RedisMessage {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis()
-                .to_string()
-                + "-0",
+                .to_string(),
             data,
         }
     }
@@ -79,8 +78,7 @@ impl From<serde_json::Value> for RedisMessage {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis()
-                .to_string()
-                + "-0",
+                .to_string(),
             data: data.as_str().unwrap().to_owned(),
         }
     }
@@ -133,7 +131,10 @@ impl MessageQueue for RedisStreamPool {
     async fn consume(&self, topic: &str) -> Result<Vec<Self::Message>, Self::Error> {
         let mut conn = self.pool.lock().await;
 
-        let result: redis::streams::StreamReadReply = conn.xread(&[topic], &["0"]).await?;
+        let options = StreamReadOptions::default().count(1);
+
+        let result: redis::streams::StreamReadReply =
+            conn.xread_options(&[topic], &["0"], &options).await?;
 
         if let Some(stream_key) = result.keys.get(0) {
             let message_values: Vec<_> = stream_key

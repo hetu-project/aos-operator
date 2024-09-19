@@ -10,6 +10,7 @@ use tools::helper::validate_key;
 #[derive(Clone, Deserialize, Serialize, Debug, Default)]
 pub struct OperatorConfig {
     pub db: DbConfig,
+    pub queue: QConfig,
     pub net: NetworkConfig,
     pub node: NodeConfig,
     pub chain: ChainConfig,
@@ -25,6 +26,11 @@ pub struct DbConfig {
     pub min_connect_pool: u32,
     pub connect_timeout: u64, // seconds
     pub acquire_timeout: u64,
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug, Default)]
+pub struct QConfig {
+    pub queue_url: String,
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug, Default)]

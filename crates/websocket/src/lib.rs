@@ -184,7 +184,7 @@ impl WebsocketSender {
 
                 tokio::time::timeout_at(timeout_at, async move {
                     // send the actual message
-                    info!("-->raw msg: {s:?}");
+                    //info!("-->raw msg: {s:?}");
                     core.send.lock().await.send(s).await.map_err(Error::other)?;
 
                     Ok(drop)
@@ -292,11 +292,7 @@ impl WebsocketReceiver {
                         }
                         Message::Frame(_) => return Err(Error::other("UnexpectedRawFrame")),
                     };
-                    info!(
-                        "<--raw msg: {:?}-{:?}",
-                        WireMessage::try_from_bytes(msg.clone())?,
-                        msg.clone()
-                    );
+                    //info!( "<--raw msg: {:?}-{:?}", WireMessage::try_from_bytes(msg.clone())?, msg.clone());
                     let recvd = WireMessage::try_from_bytes(msg)?;
                     match recvd.method {
                         Some(meth) => {

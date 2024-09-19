@@ -2,6 +2,7 @@ mod api;
 mod cli;
 mod node_factory;
 mod operator;
+mod queue;
 mod storage;
 
 use cli::operator::run_cli;
@@ -18,6 +19,7 @@ async fn async_main() {
     let rust_log = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::new(rust_log))
+        .with_line_number(true)
         .init();
 
     info!("start operator server");
