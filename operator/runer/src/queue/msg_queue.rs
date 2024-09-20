@@ -5,6 +5,7 @@ use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use thiserror::Error;
 use tokio;
 use tokio::sync::Mutex;
 use tracing::*;
@@ -21,22 +22,12 @@ pub trait MessageQueue {
     async fn acknowledge(&mut self, topic: &str, message_id: &str) -> Result<(), Self::Error>;
 }
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum RedisQueueError {
-    RedisError(redis::RedisError),
-    JsonError(serde_json::Error),
-}
-
-impl From<redis::RedisError> for RedisQueueError {
-    fn from(error: redis::RedisError) -> Self {
-        RedisQueueError::RedisError(error)
-    }
-}
-
-impl From<serde_json::Error> for RedisQueueError {
-    fn from(error: serde_json::Error) -> Self {
-        RedisQueueError::JsonError(error)
-    }
+    #[error("Error: redis error: {0}")]
+    RedisError(#[from] redis::RedisError),
+    #[error("Error: serde_json error: {0}")]
+    JsonError(#[from] serde_json::Error),
 }
 
 #[derive(Serialize, Deserialize, Debug)]

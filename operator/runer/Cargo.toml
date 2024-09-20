@@ -37,6 +37,7 @@ reqwest = { version = "0.12.4", features = ["json", "multipart"] }
 actix-web = "4.8.0"
 redis = {version = "0.27.0", features = ["aio", "tokio-comp", "connection-manager"]}
 async-trait = "0.1"
+thiserror = "1.0.22"
 
 [lints]
 workspace = true
