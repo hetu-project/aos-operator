@@ -5,13 +5,48 @@ use futures::{SinkExt, StreamExt};
 use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io::Error;
+//use std::io::Error;
 use std::net::SocketAddr;
-use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use thiserror::Error;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
-use url::Url;
+
+pub type WsResult<T> = Result<T, WsError>;
+
+#[derive(Error, Debug)]
+pub enum WsError {
+    #[error("Error: serde_json error: {0}")]
+    JsonError(#[from] serde_json::Error),
+
+    #[error("Error: tokio_tungstenite error: {0}")]
+    TungsteniteError(#[from] tokio_tungstenite::tungstenite::Error),
+
+    #[error("Error: elapsed error: {0}")]
+    ElapsedError(#[from] tokio::time::error::Elapsed),
+
+    #[error("Error: IO error: {0}")]
+    IOError(#[from] std::io::Error),
+
+    #[error("Error: Channel recv error: {0}")]
+    ChannelError(#[from] tokio::sync::oneshot::error::RecvError),
+
+    #[error("Error: websocket Closed")]
+    WebsocketClosed,
+
+    #[error("Error: websocket receiver Closed")]
+    ReceiverClosed,
+
+    #[error("Error: websocket {0:?}")]
+    ReceivedCloseFrame(String),
+
+    #[error("Error: websocket unexpected raw frame")]
+    UnexpectedRawFrame,
+
+    #[error("Error: Connection closed")]
+    ConnectionClosed,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WireMessage {
@@ -29,40 +64,44 @@ pub struct WireMessage {
 
 impl WireMessage {
     /// Deserialize a WireMessage through serde_json
-    fn try_from_bytes(b: Vec<u8>) -> std::io::Result<Self> {
+    fn try_from_bytes(b: Vec<u8>) -> WsResult<Self> {
         let w: WireMessage = serde_json::from_slice(&b)?;
+
         Ok(w)
     }
 
     /// Create a new request message with serde_json message (with new unique msg id).
-    fn request(f: String, s: Value) -> std::io::Result<(Message, String)> {
-        static ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        let id = ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    fn request(f: String, s: Value) -> WsResult<(Message, String)> {
+        static ID: AtomicU64 = AtomicU64::new(1);
+        let id = ID.fetch_add(1, Ordering::Relaxed);
+
         let s1 = Self {
             id: id.to_string(),
             method: Some(f),
             params: Some(s),
             result: None,
-            address: "".to_string(),
-            hash: "".to_string(),
-            signature: "".to_string(),
+            address: "".to_owned(),
+            hash: "".to_owned(),
+            signature: "".to_owned(),
         };
-        let s2 = serde_json::to_string(&s1).map_err(Error::other)?;
+        let s2 = serde_json::to_string(&s1)?;
+
         Ok((Message::Text(s2), id.to_string()))
     }
 
     /// Create a new response message.
-    fn response(id: String, s: Value) -> std::io::Result<Message> {
+    fn response(id: String, s: Value) -> WsResult<Message> {
         let s1 = Self {
-            id: id,
+            id,
             method: None,
             params: None,
             result: Some(s),
-            address: "".to_string(),
-            hash: "".to_string(),
-            signature: "".to_string(),
+            address: "".to_owned(),
+            hash: "".to_owned(),
+            signature: "".to_owned(),
         };
-        let s2 = serde_json::to_string(&s1).map_err(Error::other)?;
+        let s2 = serde_json::to_string(&s1)?;
+
         Ok(Message::Text(s2))
     }
 }
@@ -82,17 +121,16 @@ impl std::fmt::Debug for WebsocketRespond {
 
 impl WebsocketRespond {
     /// Respond to an incoming request.
-    pub async fn respond(self, s: Value) -> std::io::Result<()> {
+    pub async fn respond(self, s: Value) -> WsResult<()> {
         use futures::sink::SinkExt;
         self.core
             .exec(move |_, core| async move {
                 tokio::time::timeout(core.timeout, async {
                     let s = WireMessage::response(self.id, s)?;
-                    core.send.lock().await.send(s).await.map_err(Error::other)?;
+                    core.send.lock().await.send(s).await?;
                     Ok(())
                 })
-                .await
-                .map_err(Error::other)?
+                .await?
             })
             .await
     }
@@ -115,30 +153,31 @@ pub struct WebsocketListener {
 
 impl WebsocketListener {
     /// Get the bound local address of this listener.
-    pub fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
-        self.listener.local_addr()
+    pub fn local_addr(&self) -> WsResult<SocketAddr> {
+        let addr = self.listener.local_addr()?;
+        Ok(addr)
     }
 
     /// Bind a new websocket listener.
     pub async fn bind<A: tokio::net::ToSocketAddrs>(
         config: Arc<WebsocketConfig>,
         addr: A,
-    ) -> std::io::Result<Self> {
+    ) -> WsResult<Self> {
         let listener = tokio::net::TcpListener::bind(addr).await?;
+        let _addr = listener.local_addr()?;
 
-        let addr = listener.local_addr()?;
-        info!("WebsocketListener Listening {}", addr);
+        //info!("WebsocketListener Listening {}", addr);
+
         Ok(Self { config, listener })
     }
 
     /// accept incoming connection for server
-    pub async fn accept(&self) -> std::io::Result<(WebsocketSender, WebsocketReceiver)> {
+    pub async fn accept(&self) -> WsResult<(WebsocketSender, WebsocketReceiver)> {
         let (stream, addr) = self.listener.accept().await?;
         info!("Accept Incoming Websocket Connection");
         let stream =
             tokio_tungstenite::accept_async_with_config(stream, Some(self.config.to_tungstenite()))
-                .await
-                .map_err(Error::other)?;
+                .await?;
         split(stream, self.config.default_request_timeout, addr)
     }
 }
@@ -147,7 +186,7 @@ impl WebsocketListener {
 pub struct WebsocketSender(WsCoreSync, std::time::Duration);
 
 impl WebsocketSender {
-    pub async fn request(&self, f: String, s: Value) -> std::io::Result<Value> {
+    pub async fn request(&self, f: String, s: Value) -> WsResult<Value> {
         self.request_timeout(f, s, self.1).await
     }
 
@@ -156,7 +195,7 @@ impl WebsocketSender {
         f: String,
         s: Value,
         timeout: std::time::Duration,
-    ) -> std::io::Result<Value> {
+    ) -> WsResult<Value> {
         let timeout_at = tokio::time::Instant::now() + timeout;
         use futures::sink::SinkExt;
 
@@ -185,37 +224,29 @@ impl WebsocketSender {
                 tokio::time::timeout_at(timeout_at, async move {
                     // send the actual message
                     //info!("-->raw msg: {s:?}");
-                    core.send.lock().await.send(s).await.map_err(Error::other)?;
+                    core.send.lock().await.send(s).await?;
 
                     Ok(drop)
                 })
-                .await
-                .map_err(Error::other)?
+                .await?
             })
             .await?;
 
         tokio::time::timeout_at(timeout_at, async {
             // await the response
-            let resp = resp_r
-                .await
-                .map_err(|_| Error::other("ResponderDropped"))??;
+            let resp = resp_r.await??;
 
             Ok(resp)
         })
-        .await
-        .map_err(Error::other)?
+        .await?
     }
 }
 
 #[allow(dead_code)]
-pub struct WebsocketReceiver(
-    WsCoreSync,
-    std::net::SocketAddr,
-    tokio::task::JoinHandle<()>,
-);
+pub struct WebsocketReceiver(WsCoreSync, SocketAddr, tokio::task::JoinHandle<()>);
 
 impl WebsocketReceiver {
-    fn new(core: WsCoreSync, addr: std::net::SocketAddr) -> Self {
+    fn new(core: WsCoreSync, addr: SocketAddr) -> Self {
         let core2 = core.clone();
         let ping_task = tokio::task::spawn(async move {
             /*
@@ -244,12 +275,12 @@ impl WebsocketReceiver {
     }
 
     /// Peer address.
-    pub fn peer_addr(&self) -> std::net::SocketAddr {
+    pub fn peer_addr(&self) -> SocketAddr {
         self.1
     }
 
     /// Receive the next message.
-    pub async fn recv(&mut self) -> std::io::Result<ReceiveMessage> {
+    pub async fn recv(&mut self) -> WsResult<ReceiveMessage> {
         match self.recv_inner().await {
             Err(err) => {
                 info!("WebsocketReceiver Error: {:?}", err);
@@ -259,7 +290,7 @@ impl WebsocketReceiver {
         }
     }
 
-    async fn recv_inner(&mut self) -> std::io::Result<ReceiveMessage> {
+    async fn recv_inner(&mut self) -> WsResult<ReceiveMessage> {
         use futures::sink::SinkExt;
         use futures::stream::StreamExt;
         loop {
@@ -272,25 +303,21 @@ impl WebsocketReceiver {
                         .await
                         .next()
                         .await
-                        .ok_or(Error::other("ReceiverClosed"))?
-                        .map_err(Error::other)?;
+                        .ok_or(WsError::ReceiverClosed)??;
                     let msg = match msg {
                         Message::Text(s) => s.into_bytes(),
                         Message::Binary(b) => b,
                         Message::Ping(b) => {
-                            core.send
-                                .lock()
-                                .await
-                                .send(Message::Pong(b))
-                                .await
-                                .map_err(Error::other)?;
+                            core.send.lock().await.send(Message::Pong(b)).await?;
                             return Ok(None);
                         }
                         Message::Pong(_) => return Ok(None),
                         Message::Close(frame) => {
-                            return Err(Error::other(format!("ReceivedCloseFrame: {frame:?}")));
+                            return Err(WsError::ReceivedCloseFrame(format!(
+                                "ReceivedCloseFrame: {frame:?}"
+                            )));
                         }
-                        Message::Frame(_) => return Err(Error::other("UnexpectedRawFrame")),
+                        Message::Frame(_) => return Err(WsError::UnexpectedRawFrame),
                     };
                     //info!( "<--raw msg: {:?}-{:?}", WireMessage::try_from_bytes(msg.clone())?, msg.clone());
                     let recvd = WireMessage::try_from_bytes(msg)?;
@@ -344,7 +371,7 @@ type WsRecvSync = Arc<
 struct CallbackMap(
     Arc<
         std::sync::Mutex<
-            std::collections::HashMap<String, tokio::sync::oneshot::Sender<std::io::Result<Value>>>,
+            std::collections::HashMap<String, tokio::sync::oneshot::Sender<WsResult<Value>>>,
         >,
     >,
 );
@@ -353,19 +380,16 @@ impl CallbackMap {
     pub fn close(&self) {
         if let Ok(mut lock) = self.0.lock() {
             for (_, s) in lock.drain() {
-                let _ = s.send(Err(Error::other("ConnectionClosed")));
+                let _ = s.send(Err(WsError::ConnectionClosed));
             }
         }
     }
 
-    pub fn insert(&self, id: String, sender: tokio::sync::oneshot::Sender<std::io::Result<Value>>) {
+    pub fn insert(&self, id: String, sender: tokio::sync::oneshot::Sender<WsResult<Value>>) {
         self.0.lock().unwrap().insert(id, sender);
     }
 
-    pub fn remove(
-        &self,
-        id: String,
-    ) -> Option<tokio::sync::oneshot::Sender<std::io::Result<Value>>> {
+    pub fn remove(&self, id: String) -> Option<tokio::sync::oneshot::Sender<WsResult<Value>>> {
         self.0.lock().unwrap().remove(&id)
     }
 }
@@ -384,7 +408,7 @@ impl WsCoreSync {
         }
     }
 
-    fn close_if_err<R>(&self, r: std::io::Result<R>) -> std::io::Result<R> {
+    fn close_if_err<R>(&self, r: WsResult<R>) -> WsResult<R> {
         match r {
             Err(err) => {
                 self.close();
@@ -394,14 +418,14 @@ impl WsCoreSync {
         }
     }
 
-    pub async fn exec<F, C, R>(&self, c: C) -> std::io::Result<R>
+    pub async fn exec<F, C, R>(&self, c: C) -> WsResult<R>
     where
-        F: std::future::Future<Output = std::io::Result<R>>,
+        F: std::future::Future<Output = WsResult<R>>,
         C: FnOnce(WsCoreSync, WsCore) -> F,
     {
         let core = match self.0.lock().unwrap().as_ref() {
             Some(core) => core.clone(),
-            None => return Err(Error::other("WebsocketClosed")),
+            None => return Err(WsError::WebsocketClosed),
         };
         self.close_if_err(c(self.clone(), core).await)
     }
@@ -419,8 +443,8 @@ struct WsCore {
 fn split(
     stream: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
     timeout: std::time::Duration,
-    peer_addr: std::net::SocketAddr,
-) -> std::io::Result<(WebsocketSender, WebsocketReceiver)> {
+    peer_addr: SocketAddr,
+) -> WsResult<(WebsocketSender, WebsocketReceiver)> {
     let (sink, stream) = futures::stream::StreamExt::split(stream);
 
     let core = WsCore {
@@ -507,15 +531,14 @@ impl Default for WebsocketConfig {
 
 pub async fn connect(
     config: Arc<WebsocketConfig>,
-    addr: std::net::SocketAddr,
-) -> std::io::Result<(WebsocketSender, WebsocketReceiver)> {
+    addr: SocketAddr,
+) -> WsResult<(WebsocketSender, WebsocketReceiver)> {
     let stream = tokio::net::TcpStream::connect(addr).await?;
     let peer_addr = stream.peer_addr()?;
     let url = format!("ws://{addr}/ws");
     info!("ws url: {:?}", url);
     let (stream, _addr) =
         tokio_tungstenite::client_async_with_config(url, stream, Some(config.to_tungstenite()))
-            .await
-            .map_err(Error::other)?;
+            .await?;
     split(stream, config.default_request_timeout, peer_addr)
 }
