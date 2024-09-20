@@ -35,7 +35,7 @@ pub async fn tee_question_handler(
         tracing::info!("request_id: {}", request_id);
 
         let op_req = OperatorReq {
-            request_id: "1".to_owned(), //TODO
+            request_id: request_id.clone(),
             node_id: "".to_string(),
             model: req.model.clone(),
             prompt: req.message.clone(),
@@ -44,13 +44,7 @@ pub async fn tee_question_handler(
             params: req.params.clone(),
         };
 
-        let work_name = server
-            .tee_operator_collections
-            .keys()
-            .next()
-            .unwrap()
-            .clone();
-        server.send_tee_inductive_task(work_name, op_req).await;
+        server.send_tee_inductive_task(op_req).await;
     }
 
     let (tx, mut rx) = mpsc::channel(1);

@@ -197,7 +197,7 @@ async fn do_tee_job(
             top_p: top_p as f32,
             max_tokens: max_tokens as u16,
         },
-        callback_url: "http://127.0.0.1:21001/api/opml_callback".to_owned(),
+        callback_url: "http://127.0.0.1:21001/api/tee_callback".to_owned(),
     };
 
     let qest = tee_question_handler(state, tee_request).await.unwrap();

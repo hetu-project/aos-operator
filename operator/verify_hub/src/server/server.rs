@@ -1,7 +1,6 @@
+use axum::error_handling::HandleErrorLayer;
 use axum::http::Method;
 use axum::routing::get;
-use std::time::Duration;
-use axum::error_handling::HandleErrorLayer;
 use axum::{routing::post, Router};
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::PgConnection;
@@ -12,11 +11,11 @@ use reqwest::Client;
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, RwLock};
-use tower_http::cors::{Any, CorsLayer};
 use tower::ServiceBuilder;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
-
 
 use crate::config::Config;
 use crate::opml::handler::*;
@@ -89,15 +88,16 @@ impl Server {
 
     pub async fn send_tee_inductive_task(
         &self,
-        worker_name: String,
         req: OperatorReq,
-    ) -> OperatorResp {
-        let operator = self.tee_operator_collections.get(&worker_name).unwrap();
-        let op_url = format!("{}/api/v1/question", operator.worker_name);
-        //let client = Client::builder().proxy(reqwest::Proxy::http("http://127.0.0.1:8080")?).build().unwrap();
-        let resp = Client::new().post(op_url).json(&req).send().await.unwrap();
-
-        resp.json::<OperatorResp>().await.unwrap()
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let client = reqwest::Client::new();
+        let tee_server_url = format!("{}/api/v1/question", "http://127.0.0.1:3000");
+        let response = client.post(tee_server_url).json(&req).send().await?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!("OPML server responded with status: {}", response.status()).into())
+        }
     }
 
     pub async fn send_opml_request(
@@ -115,13 +115,12 @@ impl Server {
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(format!("OPML server responded with status: {}", response.status()).into())
+            Err(format!("Tee server responded with status: {}", response.status()).into())
         }
     }
 }
 
 pub async fn run(url: &str, tx: tokio::sync::oneshot::Sender<SharedState>) {
-
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST])
@@ -133,7 +132,13 @@ pub async fn run(url: &str, tx: tokio::sync::oneshot::Sender<SharedState>) {
 
     // build our application with a single route
     let app = Router::new()
-        .route("/ping", get(|| async { tracing::info!("<-- ping");"pong" }))
+        .route(
+            "/ping",
+            get(|| async {
+                tracing::info!("<-- ping");
+                "pong"
+            }),
+        )
         .route("/reister_worker", post(register_worker))
         .route("/receive_heart_beat", post(receive_heart_beat))
         .route("/api/tee_callback", post(tee_callback))
@@ -141,9 +146,9 @@ pub async fn run(url: &str, tx: tokio::sync::oneshot::Sender<SharedState>) {
         .layer(cors)
         .layer(
             ServiceBuilder::new()
-            .layer(HandleErrorLayer::new(handle_error))
-            .timeout(Duration::from_secs(600))
-            .layer(TraceLayer::new_for_http())
+                .layer(HandleErrorLayer::new(handle_error))
+                .timeout(Duration::from_secs(600))
+                .layer(TraceLayer::new_for_http()),
         )
         .with_state(server);
 
