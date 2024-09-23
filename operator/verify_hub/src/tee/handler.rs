@@ -1,16 +1,15 @@
+use crate::error;
 use crate::server::server::SharedState;
 use crate::tee::model::*;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::{debug_handler, extract, BoxError, Json};
+use axum::{debug_handler, BoxError, Json};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::borrow::Cow;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
-use tokio::time::{Duration, Instant};
-use uuid::uuid;
+use tokio::time::Duration;
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JsonResponse {
@@ -21,16 +20,13 @@ pub struct JsonResponse {
 pub async fn tee_question_handler(
     server: SharedState,
     req: QuestionReq,
-) -> Option<serde_json::Value> {
+) -> Result<AnswerReq, error::VerifyHubError> {
     tracing::info!("Handling question {:?}", req);
 
-    let uuid = uuid::Uuid::new_v4();
+    let uuid = Uuid::new_v4();
     let request_id = uuid.to_string();
     {
         let mut server = server.0.write().await;
-
-        //let mut conn = server.pg.get().expect("Failed to get a connection from pool");
-        //let q = create_question(&mut conn, request_id.clone(), req.message.clone(), req.message_id.clone(), req.conversation_id.clone(), req.model.clone(), req.callback_url.clone());
 
         tracing::info!("request_id: {}", request_id);
 
@@ -55,19 +51,13 @@ pub async fn tee_question_handler(
 
     // Poll the database for the answer
     match tokio::time::timeout(Duration::from_secs(600), rx.recv()).await {
-        Ok(Some(answer)) => Some(json!({
-            "code": 200,
-            "result": answer
-        })),
+        Ok(Some(answer)) => Ok(answer),
         _ => {
             // Clean up the channel if we time out
             let mut server = server.0.write().await;
             server.tee_channels.remove(&request_id);
 
-            Some(json!({
-                "code": 408,
-                "result": "Request timed out"
-            }))
+            Err(error::VerifyHubError::RequestTimeoutError)
         }
     }
 }

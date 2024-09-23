@@ -79,9 +79,7 @@ async fn do_opml_job(
         callback: callback,
     };
 
-    let qest = opml_question_handler(state, opml_request).await.unwrap();
-    let worker_response: WorkerResponse = serde_json::from_value(qest).unwrap();
-    let worker_result: OpmlAnswer = serde_json::from_value(worker_response.result).unwrap();
+    let worker_result = opml_question_handler(state, opml_request).await.unwrap();
 
     let mut key_value_vec: Vec<(&String, &String)> = clock.iter().collect();
     let (clk_id, clk_val) = key_value_vec
@@ -135,9 +133,7 @@ async fn do_tee_job(
         callback_url: "http://127.0.0.1:21001/api/tee_callback".to_owned(),
     };
 
-    let qest = tee_question_handler(state, tee_request).await.unwrap();
-    let worker_response: WorkerResponse = serde_json::from_value(qest).unwrap();
-    let worker_result: AnswerReq = serde_json::from_value(worker_response.result).unwrap();
+    let worker_result: AnswerReq = tee_question_handler(state, tee_request).await.unwrap();
 
     let mut key_value_vec: Vec<(&String, &String)> = clock.iter().collect();
     let (clk_id, clk_val) = key_value_vec
