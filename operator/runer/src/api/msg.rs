@@ -359,7 +359,7 @@ pub async fn handle_connection(op: OperatorArc) {
                                     ReceiveMessage::Request(id, m, p, r) => {
                                         match m.as_str() {
                                             "dispatch_job" => {
-                                                let redis_msg = RedisMessage::new((id, p));
+                                                let redis_msg = RedisMessage::new((id, p)).unwrap();
                                                 info!("Product message: data={:?}", redis_msg);
                                                 queue_clone
                                                     .produce("opml", &redis_msg)
