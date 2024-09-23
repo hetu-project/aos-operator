@@ -21,6 +21,8 @@ pub struct Operator {
 }
 
 pub type OperatorArc = Arc<Mutex<Operator>>;
+//TODO use RwLock
+//pub type OperatorArc = Arc<RwLock<Operator>>;
 
 impl Operator {
     pub fn operator_factory() -> OperatorFactory {

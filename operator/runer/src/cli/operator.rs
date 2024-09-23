@@ -63,7 +63,7 @@ pub async fn run_cli() {
     // setup node
     if let Some(config_path) = args.config_path {
         help_info = false;
-        let operator_config = construct_node_config(config_path.clone());
+        let operator_config = construct_node_config(config_path);
 
         let _operator = build_operator(operator_config.clone()).await;
 
@@ -99,8 +99,5 @@ pub async fn build_operator(config: OperatorConfig) -> OperatorArc {
         .set_config(config)
         .initialize_node()
         .await
-        .map_err(|e| {
-            panic!("Failed to build operator due to error, detail {:?}", e);
-        })
         .unwrap()
 }

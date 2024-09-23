@@ -1,5 +1,6 @@
 mod api;
 mod cli;
+mod error;
 mod node_factory;
 mod operator;
 mod queue;
