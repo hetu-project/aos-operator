@@ -19,26 +19,14 @@ pub struct JsonResponse {
 
 pub async fn tee_question_handler(
     server: SharedState,
-    req: QuestionReq,
+    op_req: OperatorReq,
 ) -> Result<AnswerReq, error::VerifyHubError> {
-    tracing::info!("Handling question {:?}", req);
+    tracing::info!("Handling question {:?}", op_req);
 
-    let uuid = Uuid::new_v4();
-    let request_id = uuid.to_string();
+    let request_id = op_req.request_id.clone();
+
     {
         let mut server = server.0.write().await;
-
-        tracing::info!("request_id: {}", request_id);
-
-        let op_req = OperatorReq {
-            request_id: request_id.clone(),
-            node_id: "".to_string(),
-            model: req.model.clone(),
-            prompt: req.message.clone(),
-            prompt_hash: "".to_string(),
-            signature: "".to_string(),
-            params: req.params.clone(),
-        };
 
         server.send_tee_inductive_task(op_req).await;
     }

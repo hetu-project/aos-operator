@@ -4,21 +4,23 @@ use crate::queue::msg_queue::{MessageQueue, RedisMessage, RedisStreamPool};
 use alloy::primitives::Address;
 use alloy_wrapper::contracts::vrf_range;
 use hex::FromHex;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::info;
-use verify_hub::opml::{
-    handler::opml_question_handler,
-    model::{OpmlAnswer, OpmlRequest},
-};
-use verify_hub::server::server::SharedState;
-use verify_hub::tee::{
-    handler::tee_question_handler,
-    model::{AnswerReq, Params, QuestionReq},
+use uuid::Uuid;
+use verify_hub::{
+    opml::{
+        handler::opml_question_handler,
+        model::{OpmlAnswer, OpmlRequest},
+    },
+    server::server::SharedState,
+    tee::{
+        handler::tee_question_handler,
+        model::{AnswerReq, OperatorReq, Params},
+    },
 };
 use websocket::{connect, ReceiveMessage, WebsocketConfig, WebsocketSender};
 
@@ -75,11 +77,11 @@ async fn do_opml_job(
     let opml_request = OpmlRequest {
         model,
         prompt,
-        req_id: "".to_owned(),
+        req_id: Uuid::new_v4().to_string(),
         callback: callback,
     };
 
-    let worker_result = opml_question_handler(state, opml_request).await.unwrap();
+    let worker_result: OpmlAnswer = opml_question_handler(state, opml_request).await.unwrap();
 
     let mut key_value_vec: Vec<(&String, &String)> = clock.iter().collect();
     let (clk_id, clk_val) = key_value_vec
@@ -101,9 +103,8 @@ async fn do_opml_job(
                 .unwrap()
                 .to_string(),
         )]),
-        //TODO
-        operator: String::from_str("operator1").unwrap(),
-        signature: String::from_str("signature").unwrap(),
+        operator: "".to_owned(),
+        signature: "".to_owned(),
     }])
 }
 
@@ -119,18 +120,18 @@ async fn do_tee_job(
     max_tokens: u64,
     clock: &HashMap<String, String>,
 ) -> JobResultRequest {
-    //TODO Mock
-    let tee_request = QuestionReq {
-        message: prompt,
-        message_id: "1".to_owned(),
-        conversation_id: "1".to_owned(),
-        model: model,
+    let tee_request = OperatorReq {
+        request_id: Uuid::new_v4().to_string(),
+        node_id: "".to_string(),
+        model: model.clone(),
+        prompt: prompt.clone(),
+        prompt_hash: "".to_string(),
+        signature: "".to_string(),
         params: Params {
             temperature: temperature as f32,
             top_p: top_p as f32,
             max_tokens: max_tokens as u16,
         },
-        callback_url: "http://127.0.0.1:21001/api/tee_callback".to_owned(),
     };
 
     let worker_result: AnswerReq = tee_question_handler(state, tee_request).await.unwrap();
@@ -140,6 +141,7 @@ async fn do_tee_job(
         .pop()
         .map(|(id, val)| (id.as_str(), val))
         .unwrap();
+
     JobResultRequest(vec![JobResultParam {
         user,
         job_id,
@@ -154,8 +156,8 @@ async fn do_tee_job(
                 .unwrap()
                 .to_string(),
         )]),
-        operator: String::from_str("operator1").unwrap(),
-        signature: String::from_str("signature").unwrap(),
+        operator: "".to_owned(),
+        signature: "".to_owned(),
     }])
 }
 

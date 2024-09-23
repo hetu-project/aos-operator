@@ -3,15 +3,11 @@ use crate::opml::model::*;
 use crate::server::server::SharedState;
 use axum::{debug_handler, extract::State, Json};
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
 pub async fn opml_question_handler(
     server: SharedState,
-    mut opml_request: OpmlRequest,
+    opml_request: OpmlRequest,
 ) -> Result<OpmlAnswer, error::VerifyHubError> {
-    let id = Uuid::new_v4();
-    opml_request.req_id = id.to_string();
-
     let req_id = opml_request.req_id.clone();
 
     {
