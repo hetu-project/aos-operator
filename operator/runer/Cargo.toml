@@ -40,6 +40,8 @@ async-trait = "0.1"
 thiserror = "1.0.22"
 eyre = "0.6.12"
 uuid = { version = "1", features = ["v4"] }
+ed25519-dalek = { version = "2.1.1", features = ["serde", "digest", "rand_core", "pem", "pkcs8"] }
+futures = "0.3.30"
 
 [lints]
 workspace = true

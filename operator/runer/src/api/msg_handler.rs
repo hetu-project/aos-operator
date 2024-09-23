@@ -1,8 +1,11 @@
 use super::msg::*;
+use super::vrf_key::VRFReply;
 use crate::operator::OperatorArc;
 use crate::queue::msg_queue::{MessageQueue, RedisMessage, RedisStreamPool};
 use alloy::primitives::Address;
+use alloy::signers::local::yubihsm::setup::Report;
 use alloy_wrapper::contracts::vrf_range;
+use ed25519_dalek::{Digest, Sha512};
 use hex::FromHex;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -48,7 +51,7 @@ pub async fn connect_dispatcher(sender: &WebsocketSender) {
 }
 
 pub async fn job_result(sender: &WebsocketSender, msg: Value) {
-    let _res = sender
+    let res = sender
         .request_timeout(
             String::from_str("job_result").unwrap(),
             msg,
@@ -57,7 +60,7 @@ pub async fn job_result(sender: &WebsocketSender, msg: Value) {
         .await
         .unwrap();
 
-    match serde_json::from_value(_res).unwrap() {
+    match serde_json::from_value(res).unwrap() {
         WsResponse { code, message } => {
             info!("<--JobResult: code={:?}, message={:?}", code, message);
         }
@@ -161,78 +164,102 @@ async fn do_tee_job(
     }])
 }
 
-async fn do_job(id: String, msg: DispatchJobRequest, tx: WebsocketSender, op: OperatorArc) {
+async fn compute_vrf(
+    op: OperatorArc,
+    tag: String,
+    position: String,
+    prompt: String,
+) -> Result<VRFReply, std::io::Error> {
     let config = op.lock().await.config.clone();
     let contract = op.lock().await.vrf_range_contract.clone();
     let vrf_key = op.lock().await.vrf_key.clone();
+    let addr: Address =
+        Address::new(<[u8; 20]>::from_hex(&config.node.node_id[2..]).unwrap_or_default());
+
+    let (start, end) = vrf_range::get_range_by_address(contract.clone(), addr)
+        .await
+        .map(|(x, y)| (x as f64, y as f64))
+        .unwrap();
+    let max_range = vrf_range::get_max_range(contract)
+        .await
+        .or_else(|_e| Ok::<u64, Report>(10000))
+        .unwrap() as f64;
+
+    //adjust acording to tag and position
+    let range = match tag.as_str() {
+        "suspicion" => (
+            (start - max_range * 0.03) as u64,
+            (end + max_range * 0.03) as u64,
+        ),
+        "malicious" => match position.as_str() {
+            "before" => (
+                (start - max_range * 0.1) as u64,
+                (end + max_range * 0.1) as u64,
+            ),
+            "after" => (
+                (start - max_range * 0.03) as u64,
+                (end + max_range * 0.03) as u64,
+            ),
+            &_ => panic!("Unexpected value: {}", position),
+        },
+        _ => (start as u64, end as u64),
+    };
+
+    let vrf_threshold = range.1 - range.0;
+    let vrf_precision = config.chain.vrf_sort_precision as usize;
+    let mut hasher = Sha512::new();
+    Digest::update(&mut hasher, prompt);
+    let vrf_prompt_hash = hasher
+        .finalize()
+        .to_vec()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect();
+
+    vrf_key.run_vrf(vrf_prompt_hash, vrf_precision, vrf_threshold)
+}
+
+async fn do_job(msg: DispatchJobRequest, sender: WebsocketSender, op: OperatorArc) {
+    let config = op.lock().await.config.clone();
     let state = op.lock().await.hub_state.clone();
 
-    let bytes = <[u8; 20]>::from_hex(&config.node.node_id[2..]).unwrap_or_default();
-    let addr: Address = Address::new(bytes);
-    let (start, end) = vrf_range::get_range_by_address2(contract, addr)
-        .await
-        .unwrap();
-
-    //TODO loop process
+    //for params in &msg.0.iter() {}
     let params = &msg.0[0];
     let job_id = params.job_id.clone();
     info!("dispatch params:{params:?}");
 
-    let tag = params.tag.clone();
+    let position = params.position.clone();
     let user = params.user.clone();
-    //TODO use contract MAX
-    let max_range = 10000.0;
-    //adjust acording to tag and position
-    let _range = match params.tag.as_str() {
-        "suspicion" => (
-            ((start as f64) - max_range * 0.03) as u64,
-            ((end as f64) + max_range * 0.03) as u64,
-        ),
-        "malicious" => match params.position.as_str() {
-            "before" => (
-                ((start as f64) - max_range * 0.1) as u64,
-                ((end as f64) + max_range * 0.1) as u64,
-            ),
-            "after" => (
-                ((start as f64) - max_range * 0.03) as u64,
-                ((end as f64) + max_range * 0.03) as u64,
-            ),
-            &_ => panic!("no way"),
-        },
-        _ => (start, end),
-    };
 
-    let vrf_threshold = end - start;
-    let vrf_precision = config.chain.vrf_sort_precision as usize;
-    let vrf_prompt_hash = params.job.prompt.clone();
+    let vrf_result = compute_vrf(op, params.tag.clone(), position, params.job.prompt.clone())
+        .await
+        .unwrap();
+    if vrf_result.selected == false {
+        //TODO return to dispatcher
+    }
 
-    let _res = vrf_key.run_vrf(vrf_prompt_hash, vrf_precision, vrf_threshold);
-    info!("vrf={:?}", _res);
-
-    let callback = config.net.callback_url.clone();
-    let mut res: JobResultRequest = Default::default();
-    match params.job.tag.as_str() {
+    let res = match params.job.tag.as_str() {
         "opml" => {
-            res = do_opml_job(
+            do_opml_job(
                 state.unwrap(),
-                "llama-7b".to_owned(),
+                params.job.model.to_owned(),
                 params.job.prompt.clone(),
                 user,
                 job_id,
-                tag,
-                callback,
+                params.tag.clone(),
+                config.net.callback_url.clone(),
                 &params.clock,
             )
             .await
         }
         "tee" => {
-            res = do_tee_job(
+            do_tee_job(
                 state.unwrap(),
-                "llama-7b".to_owned(),
+                params.job.model.to_owned(),
                 params.job.prompt.clone(),
                 user,
                 job_id,
-                tag,
+                params.tag.clone(),
                 params.job.params.temperature,
                 params.job.params.top_p,
                 params.job.params.max_tokens,
@@ -240,10 +267,10 @@ async fn do_job(id: String, msg: DispatchJobRequest, tx: WebsocketSender, op: Op
             )
             .await
         }
-        _ => panic!("no way"),
-    }
+        _ => panic!("Unexpected value: {}", params.job.tag),
+    };
 
-    job_result(&tx, serde_json::to_value(&res).unwrap()).await;
+    job_result(&sender, serde_json::to_value(&res).unwrap()).await;
 }
 
 async fn handle_dispatchjobs(
@@ -255,15 +282,18 @@ async fn handle_dispatchjobs(
         let msgs = queue.consume("opml").await.unwrap();
 
         for (_k, m) in msgs.iter().enumerate() {
+            //TODO worker if free?
+            //
             let (id, msg): (String, Value) = serde_json::from_str(m.data.as_str()).unwrap();
             info!("Consumed message: id={:?}, data={:?}", id, msg);
 
             let job: DispatchJobRequest = serde_json::from_value(msg).unwrap();
-
             let op = operator.clone();
-
             let sender_clone = sender.clone();
-            do_job(id, job, sender_clone, op).await;
+
+            do_job(job, sender_clone, op).await;
+
+            //TODO save to db
 
             queue.acknowledge("opml", &m.id).await.unwrap();
         }
@@ -299,7 +329,7 @@ pub async fn handle_connection(op: OperatorArc) {
                                                     .await
                                                     .unwrap();
                                             }
-                                            &_ => panic!("no way"),
+                                            &_ => panic!("Unexpected value"),
                                         };
 
                                         let rep = serde_json::to_value(WsResponse {
@@ -329,8 +359,14 @@ pub async fn handle_connection(op: OperatorArc) {
                 let s_task = tokio::task::spawn(async move {
                     handle_dispatchjobs(_operator_clone, sender, queue_cl).await;
                 });
-                s_task.await.unwrap();
-                r_task.await.unwrap();
+                let results = futures::future::join_all(vec![s_task, r_task]).await;
+
+                for result in results {
+                    match result {
+                        Ok(value) => println!("Task completed with value: {:?}", value),
+                        Err(e) => eprintln!("Task failed: {:?}", e),
+                    }
+                }
             }
             Err(_) => {
                 retry_count += 1;

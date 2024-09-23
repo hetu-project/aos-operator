@@ -36,6 +36,14 @@ pub async fn get_num_operators(contract: OperatorRangeContract) -> Result<ruint:
     debug!("Total operator numbers: {_0} ");
     Ok(_0)
 }
+pub async fn get_max_range(contract: OperatorRangeContract) -> Result<u64> {
+    let OperatorRangeManager::MAX_RANGEReturn { _0 } = contract.MAX_RANGE().call().await?;
+
+    debug!("Max range: {_0} ");
+
+    let r: u64 = _0.try_into()?;
+    Ok(r)
+}
 
 pub async fn get_operator_range_by_seed(
     contract: OperatorRangeContract,
@@ -49,7 +57,7 @@ pub async fn get_operator_range_by_seed(
     Ok(_0)
 }
 
-pub async fn get_range_by_address(
+pub async fn get_range_len_by_address(
     contract: OperatorRangeContract,
     query_addr: Address,
 ) -> Result<u64> {
@@ -62,7 +70,7 @@ pub async fn get_range_by_address(
     Ok(th)
 }
 
-pub async fn get_range_by_address2(
+pub async fn get_range_by_address(
     contract: OperatorRangeContract,
     query_addr: Address,
 ) -> Result<(u64, u64)> {
