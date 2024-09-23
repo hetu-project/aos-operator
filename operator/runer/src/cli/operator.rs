@@ -1,4 +1,4 @@
-use crate::api::msg::{connect_dispatcher, handle_connection, job_result};
+use crate::api::msg_handler::{connect_dispatcher, handle_connection, job_result};
 use crate::operator::Operator;
 use crate::operator::OperatorArc;
 use node_api::config;
