@@ -3,6 +3,7 @@ use super::vrf_key::VRFReply;
 use crate::operator::OperatorArc;
 use crate::queue::msg_queue::{MessageQueue, RedisMessage, RedisStreamPool};
 use alloy::primitives::Address;
+use alloy::rpc::types::serde_helpers::storage;
 use alloy::signers::local::yubihsm::setup::Report;
 use alloy_wrapper::contracts::vrf_range;
 use ed25519_dalek::{Digest, Sha512};
@@ -222,6 +223,7 @@ async fn compute_vrf(
 async fn do_job(msg: DispatchJobRequest, sender: WebsocketSender, op: OperatorArc) {
     let config = op.lock().await.config.clone();
     let state = op.lock().await.hub_state.clone();
+    let storage = op.lock().await.storage.clone();
 
     //for params in &msg.0.iter() {}
     let params = &msg.0[0];
@@ -270,6 +272,16 @@ async fn do_job(msg: DispatchJobRequest, sender: WebsocketSender, op: OperatorAr
         _ => panic!("Unexpected value: {}", params.job.tag),
     };
 
+    storage
+        .sinker_job(
+            res.0[0].job_id.clone(),
+            res.0[0].user.clone(),
+            res.0[0].result.clone(),
+            res.0[0].tag.clone(),
+            serde_json::to_string(&res.0[0].clock).unwrap(),
+        )
+        .await;
+
     job_result(&sender, serde_json::to_value(&res).unwrap()).await;
 }
 
@@ -292,8 +304,6 @@ async fn handle_dispatchjobs(
             let sender_clone = sender.clone();
 
             do_job(job, sender_clone, op).await;
-
-            //TODO save to db
 
             queue.acknowledge("opml", &m.id).await.unwrap();
         }
