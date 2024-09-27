@@ -1,0 +1,33 @@
+[package]
+name = "signer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tracing = "0.1.40"
+sha3 = "0.10"
+secp256k1 = "0.24"
+hex = "0.4.3"
+thiserror = "1.0.22"
+alloy = { version = "0.2.0", features = [
+    "full",
+    "node-bindings",
+    "rpc-types-debug",
+    "rpc-types-trace",
+    "json-rpc",
+    "rpc-client",
+    "signer-aws",
+    "signer-keystore",
+    "signer-ledger",
+    "signer-mnemonic",
+    "signer-trezor",
+    "signer-yubihsm",
+] }
+serde = { version = "1.0.204", features = ["derive"] }
+serde_json = {version = "1.0.120", features = ["preserve_order"]}
+
+#serde = { version = "1", features = ["derive"] }
+#serde_json = { version = "1" }
+
+[lints]
+workspace = true

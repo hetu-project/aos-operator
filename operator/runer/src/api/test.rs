@@ -1,7 +1,16 @@
+use alloy::{
+    primitives::keccak256,
+    signers::{local::PrivateKeySigner, Signature as AlloySignature, SignerSync},
+};
+use hex::FromHex;
 use node_api::error::OperatorAPIResult;
+use secp256k1::SecretKey;
 use serde_json::Value;
+use signer::msg_signer::{MessageVerify, Signer};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 use tracing::info;
 use websocket::{
     ReceiveMessage, WebsocketConfig, WebsocketListener, WebsocketReceiver, WebsocketSender,
@@ -56,7 +65,16 @@ async fn test() {
         let addr = s.local_addr().unwrap();
         info!("server: {}", addr);
 
-        let (send, mut recv) = s.accept().await.unwrap();
+        let secret_key = PrivateKeySigner::from_slice(
+            &<[u8; 32]>::from_hex(
+                "77f4b2fbf3f32687f03d84d323bd5cb443f53b0fc338b51c24e319a520c87217",
+            )
+            .unwrap_or_default(),
+        )
+        .expect("signer err");
+
+        let signer = MessageVerify(secret_key);
+        let (send, mut recv) = s.accept(signer).await.unwrap();
 
         let r_task = tokio::task::spawn(async move {
             handle_connection(recv).await;
@@ -64,35 +82,39 @@ async fn test() {
 
         let mut map = std::collections::HashMap::new();
         map.insert("1".to_string(), "2".to_owned());
-        let _res = send
-            .request_timeout(
-                String::from_str("dispatch_job").unwrap(),
-                serde_json::to_value(DispatchJobRequest(vec![DispatchJobParam {
-                    user: String::from_str("AI").unwrap(),
-                    seed: String::from_str("abc").unwrap(),
-                    signature: String::from_str("signature").unwrap(),
-                    tag: "malicious".to_owned(),
-                    clock: map,
-                    position: "before".to_owned(),
-                    job_id: String::from_str("1").unwrap(),
-                    job: Job {
-                        model: String::from_str("2").unwrap(),
-                        prompt: String::from_str("what's AI?").unwrap(),
-                        tag: "opml".to_owned(),
-                        params: JobParams {
-                            temperature: 1.0,
-                            top_p: 5.0,
-                            max_tokens: 100,
+        for i in (1..=10) {
+            let _res = send
+                .request_timeout(
+                    String::from_str("dispatch_job").unwrap(),
+                    serde_json::to_value(DispatchJobRequest(vec![DispatchJobParam {
+                        user: String::from_str("AI").unwrap(),
+                        seed: String::from_str("abc").unwrap(),
+                        signature: String::from_str("signature").unwrap(),
+                        tag: "malicious".to_owned(),
+                        clock: map.clone(),
+                        position: "before".to_owned(),
+                        job_id: String::from_str("100").unwrap(),
+                        job: Job {
+                            model: String::from_str("2").unwrap(),
+                            prompt: String::from_str("what's AI?").unwrap()
+                                + i.to_string().as_str(),
+                            tag: "opml".to_owned(),
+                            params: JobParams {
+                                temperature: 1.0,
+                                top_p: 5.0,
+                                max_tokens: 100,
+                            },
                         },
-                    },
-                }]))
-                .unwrap(),
-                std::time::Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
+                    }]))
+                    .unwrap(),
+                    std::time::Duration::from_secs(5),
+                )
+                .await
+                .unwrap();
 
-        info!("{:?}", _res);
+            info!("{:?}", _res);
+            thread::sleep(Duration::from_secs(5));
+        }
 
         r_task.await.unwrap();
     });

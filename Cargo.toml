@@ -9,7 +9,9 @@ members = [
     "crates/vrf",
     "operator/node_api",
     "operator/db_sql",
-    "operator/runer", "operator/verify_hub",
+    "operator/runer",
+    "operator/verify_hub",
+    "crates/signer",
 ]
 
 exclude = []

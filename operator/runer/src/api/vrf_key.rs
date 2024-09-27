@@ -50,6 +50,7 @@ impl VRFPrivKey {
         let random_str = &random_num[start..end];
         let vrf_sampler = VRFSampler::new(vrf_precision * 4);
         let random_bigint = vrf_sampler.hex_to_biguint(random_str);
+        println!("rand:{:?},{:?}", random_bigint, vrf_threshold);
         let selected = vrf_sampler.meets_threshold(&random_bigint, &BigUint::from(vrf_threshold));
         Ok(VRFReply {
             selected,

@@ -3,6 +3,7 @@ use crate::opml::model::*;
 use crate::server::server::SharedState;
 use axum::{debug_handler, extract::State, Json};
 use tokio::sync::mpsc;
+use tokio::time::Duration;
 
 pub async fn opml_question_handler(
     server: SharedState,
@@ -32,9 +33,21 @@ pub async fn opml_question_handler(
 
     // Poll the channel for the answer from the callback
     tracing::info!("Waiting for OPML answer, req_id: {}", req_id);
-    let ret = rx.recv().await;
-    tracing::info!("Received OPML answer, req_id: {}", req_id);
-    ret.ok_or(error::VerifyHubError::ChannelClosedError)
+    //let ret = rx.recv().await;
+    //tracing::info!("Received OPML answer, req_id: {}", req_id);
+    //ret.ok_or(error::VerifyHubError::ChannelClosedError)
+
+        match tokio::time::timeout(Duration::from_secs(600), rx.recv()).await {
+            Ok(Some(answer)) => Ok(answer),
+            _ => {
+                // Clean up the channel if we time out
+                //let mut server =
+                //    server.0.write().await;
+                //server.tee_channels.remove(&request_id);
+
+                Err(error::VerifyHubError::RequestTimeoutError)
+            }
+        }
 }
 
 #[debug_handler]

@@ -53,7 +53,8 @@ impl RedisMessage {
                 .duration_since(UNIX_EPOCH)
                 .map_err(RedisQueueError::TimeError)?
                 .as_millis()
-                .to_string(),
+                .to_string()
+                + "-0",
             data: serde_json::to_string(&data)?,
         })
     }

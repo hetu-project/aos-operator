@@ -5,7 +5,9 @@ use futures::{SinkExt, StreamExt};
 use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use signer::msg_signer::{MessageVerify, Signer};
 //use std::io::Error;
+use secp256k1::{PublicKey, Secp256k1};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -51,14 +53,16 @@ pub enum WsError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WireMessage {
     pub id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    //#[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    //#[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    //#[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
     pub address: String,
+    //#[serde(skip_serializing_if = "String::is_empty")]
     pub hash: String,
+    //#[serde(skip_serializing_if = "String::is_empty")]
     pub signature: String,
 }
 
@@ -71,35 +75,47 @@ impl WireMessage {
     }
 
     /// Create a new request message with serde_json message (with new unique msg id).
-    fn request(f: String, s: Value) -> WsResult<(Message, String)> {
+    fn request(f: String, s: Value, signer: MessageVerify) -> WsResult<(Message, String)> {
         static ID: AtomicU64 = AtomicU64::new(1);
         let id = ID.fetch_add(1, Ordering::Relaxed);
 
-        let s1 = Self {
+        let mut s1 = Self {
             id: id.to_string(),
             method: Some(f),
             params: Some(s),
             result: None,
-            address: "".to_owned(),
+            address: "0x02a5592a6dE1568F6eFdC536DA3EF887f98414cb".to_owned(),
             hash: "".to_owned(),
             signature: "".to_owned(),
         };
+
+        let hash = MessageVerify::generate_hash_str(&s1).unwrap();
+        let sig = signer.sign_message(&signer.0, &s1);
+        s1.hash = hash;
+        s1.signature = sig;
+
         let s2 = serde_json::to_string(&s1)?;
 
         Ok((Message::Text(s2), id.to_string()))
     }
 
     /// Create a new response message.
-    fn response(id: String, s: Value) -> WsResult<Message> {
-        let s1 = Self {
+    fn response(id: String, s: Value, signer: MessageVerify) -> WsResult<Message> {
+        let mut s1 = Self {
             id,
             method: None,
             params: None,
             result: Some(s),
-            address: "".to_owned(),
+            address: "0x02a5592a6dE1568F6eFdC536DA3EF887f98414cb".to_owned(),
             hash: "".to_owned(),
             signature: "".to_owned(),
         };
+
+        let hash = MessageVerify::generate_hash_str(&s1).unwrap();
+        let sig = signer.sign_message(&signer.0, &s1);
+        s1.hash = hash;
+        s1.signature = sig;
+
         let s2 = serde_json::to_string(&s1)?;
 
         Ok(Message::Text(s2))
@@ -124,9 +140,9 @@ impl WebsocketRespond {
     pub async fn respond(self, s: Value) -> WsResult<()> {
         use futures::sink::SinkExt;
         self.core
-            .exec(move |_, core| async move {
+            .exec(move |core_sync, core| async move {
                 tokio::time::timeout(core.timeout, async {
-                    let s = WireMessage::response(self.id, s)?;
+                    let s = WireMessage::response(self.id, s, core_sync.signer().unwrap())?;
                     core.send.lock().await.send(s).await?;
                     Ok(())
                 })
@@ -172,13 +188,16 @@ impl WebsocketListener {
     }
 
     /// accept incoming connection for server
-    pub async fn accept(&self) -> WsResult<(WebsocketSender, WebsocketReceiver)> {
+    pub async fn accept(
+        &self,
+        signer: MessageVerify,
+    ) -> WsResult<(WebsocketSender, WebsocketReceiver)> {
         let (stream, addr) = self.listener.accept().await?;
         info!("Accept Incoming Websocket Connection");
         let stream =
             tokio_tungstenite::accept_async_with_config(stream, Some(self.config.to_tungstenite()))
                 .await?;
-        split(stream, self.config.default_request_timeout, addr)
+        split(stream, self.config.default_request_timeout, addr, signer)
     }
 }
 
@@ -190,6 +209,10 @@ impl WebsocketSender {
         self.request_timeout(f, s, self.1).await
     }
 
+    pub fn signer(&self) -> Result<MessageVerify, WsError> {
+        self.0.signer()
+    }
+
     pub async fn request_timeout(
         &self,
         f: String,
@@ -199,7 +222,7 @@ impl WebsocketSender {
         let timeout_at = tokio::time::Instant::now() + timeout;
         use futures::sink::SinkExt;
 
-        let (s, id) = WireMessage::request(f, s)?;
+        let (s, id) = WireMessage::request(f, s, self.signer().unwrap())?;
 
         /// Drop helper to remove our response callback if we timeout.
         struct D(CallbackMap, String);
@@ -321,8 +344,22 @@ impl WebsocketReceiver {
                     };
                     //info!( "<--raw msg: {:?}-{:?}", WireMessage::try_from_bytes(msg.clone())?, msg.clone());
                     let recvd = WireMessage::try_from_bytes(msg)?;
-                    match recvd.method {
+                    match recvd.method.clone() {
                         Some(meth) => {
+                            let signer = core_sync.signer().unwrap();
+
+                            let mut recvd_clone = recvd.clone();
+                            recvd_clone.hash = String::new();
+                            recvd_clone.signature = String::new();
+                            let is_valid = signer.verify_signature(
+                                //&"0x1DdBd306eFFbb5FF29E41398A6a1198Ee6Fb51ce".to_owned(),
+                                &(recvd_clone.address.clone()),
+                                &recvd_clone,
+                                recvd.signature.as_str(),
+                            );
+
+                            let hashstr = MessageVerify::generate_hash_str(&recvd_clone).unwrap();
+
                             let resp = WebsocketRespond {
                                 id: recvd.id.clone(),
                                 core: core_sync,
@@ -429,6 +466,14 @@ impl WsCoreSync {
         };
         self.close_if_err(c(self.clone(), core).await)
     }
+
+    pub fn signer(&self) -> Result<MessageVerify, WsError> {
+        let core = match self.0.lock().unwrap().as_ref() {
+            Some(core) => core.clone(),
+            None => return Err(WsError::WebsocketClosed),
+        };
+        Ok(core.signer)
+    }
 }
 
 #[derive(Clone)]
@@ -437,6 +482,7 @@ struct WsCore {
     pub recv: WsRecvSync,
     pub callback: CallbackMap,
     pub timeout: std::time::Duration,
+    pub signer: MessageVerify,
 }
 
 /// can be used both client and server
@@ -444,6 +490,7 @@ fn split(
     stream: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
     timeout: std::time::Duration,
     peer_addr: SocketAddr,
+    signer: MessageVerify,
 ) -> WsResult<(WebsocketSender, WebsocketReceiver)> {
     let (sink, stream) = futures::stream::StreamExt::split(stream);
 
@@ -454,6 +501,7 @@ fn split(
             std::collections::HashMap::new(),
         ))),
         timeout,
+        signer: signer,
     };
 
     let core_send = WsCoreSync(Arc::new(std::sync::Mutex::new(Some(core))));
@@ -532,6 +580,7 @@ impl Default for WebsocketConfig {
 pub async fn connect(
     config: Arc<WebsocketConfig>,
     addr: SocketAddr,
+    signer: MessageVerify,
 ) -> WsResult<(WebsocketSender, WebsocketReceiver)> {
     let stream = tokio::net::TcpStream::connect(addr).await?;
     let peer_addr = stream.peer_addr()?;
@@ -540,5 +589,5 @@ pub async fn connect(
     let (stream, _addr) =
         tokio_tungstenite::client_async_with_config(url, stream, Some(config.to_tungstenite()))
             .await?;
-    split(stream, config.default_request_timeout, peer_addr)
+    split(stream, config.default_request_timeout, peer_addr, signer)
 }

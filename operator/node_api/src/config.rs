@@ -48,6 +48,8 @@ pub struct NodeConfig {
     pub node_id: String,
     pub signer_key: String,
     pub vrf_key: String,
+    pub dispatcher_address: String,
+    pub node_type: String,
     pub cache_msg_maximum: u64,
     pub heartbeat_interval: u64,
 

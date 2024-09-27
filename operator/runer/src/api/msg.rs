@@ -1,3 +1,4 @@
+use super::vrf_key::VRFReply;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -66,10 +67,10 @@ pub struct DispatchJobRequest(pub Vec<DispatchJobParam>);
 pub struct DispatchJobParam {
     pub user: String,
     pub seed: String,
-    pub signature: String,
     pub tag: String,
-    pub clock: HashMap<String, String>,
     pub position: String,
+    pub signature: String,
+    pub clock: HashMap<String, String>,
     pub job_id: String,
     pub job: Job,
 }
@@ -121,6 +122,7 @@ pub struct JobResultParam {
     pub user: String,
     pub job_id: String,
     pub result: String,
+    pub vrf: VRFReply,
     pub tag: String,
     pub clock: HashMap<String, String>,
     pub operator: String,

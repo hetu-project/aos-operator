@@ -13,6 +13,7 @@ db_sql ={version = "0.1.0", path = "../db_sql" }
 alloy-wrapper = { path = "../../crates/alloy-wrapper"}
 websocket = {path = "../../crates/websocket"}
 vrf = { path = "../../crates/vrf"}
+signer = { path = "../../crates/signer"}
 verify_hub = { path = "../verify_hub"}
 structopt = "0.3.11"
 tracing = "0.1.40"
@@ -36,6 +37,7 @@ hex = "0.4.3"
 reqwest = { version = "0.12.4", features = ["json", "multipart"] }
 actix-web = "4.8.0"
 redis = {version = "0.27.0", features = ["aio", "tokio-comp", "connection-manager"]}
+secp256k1 = "0.24"
 async-trait = "0.1"
 thiserror = "1.0.22"
 eyre = "0.6.12"
