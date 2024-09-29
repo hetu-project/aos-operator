@@ -1,7 +1,7 @@
 use crate::api::vrf_key::VRFPrivKey;
 use crate::error::{
     OperatorError::{
-        OPDecodeSignerKeyError, OPNewVrfRangeContractError, OPVrfMaterialError, OpChannelError,
+        OPChannelError, OPDecodeSignerKeyError, OPNewVrfRangeContractError, OPVrfMaterialError,
     },
     OperatorResult,
 };
@@ -73,7 +73,7 @@ impl OperatorFactory {
             server::run(&config.net.rest_url, tx).await;
         });
 
-        let server = rx.await.map_err(OpChannelError)?;
+        let server = rx.await.map_err(OPChannelError)?;
         arc_operator.lock().await.hub_state = Some(server);
 
         Ok(arc_operator)

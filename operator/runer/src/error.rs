@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use thiserror::Error;
+use verify_hub::error::VerifyHubError;
 use vrf::traits::CryptoMaterialError;
 
 pub enum OperatorErrorCodes {
@@ -12,6 +13,10 @@ pub enum OperatorErrorCodes {
     OP_GET_RANGE_CONTRACT_ERROR = 3007,
     OP_CRYPTO_MATERIAL_ERROR = 3008,
     OP_CHANNEL_ERROR = 3009,
+    OP_UNSUPPORT_ERROR = 3010,
+    OP_IO_ERROR = 3011,
+    OP_VERIFYHUB_ERROR = 3012,
+    OP_TIMEOUT_ERROR = 3013,
 }
 
 pub type OperatorResult<T> = Result<T, OperatorError>;
@@ -54,6 +59,8 @@ pub enum OperatorError {
     )]
     OPNewVrfRangeContractError(#[from] eyre::ErrReport),
 
+    //OPNewVrfRangeContractError(#[from] eyre::ErrReport),
+    //alloy::signers::local::yubihsm::setup::Report;
     #[error(
         "Error: get vrf range contract failed, detail: {0}  (Error Code: {})",
         OperatorErrorCodes::OP_GET_RANGE_CONTRACT_ERROR as u32
@@ -70,5 +77,41 @@ pub enum OperatorError {
         "Error: Channel recv failed, detail: {0}  (Error Code: {})",
         OperatorErrorCodes::OP_CHANNEL_ERROR as u32
     )]
-    OpChannelError(#[from] tokio::sync::oneshot::error::RecvError),
+    OPChannelError(#[from] tokio::sync::oneshot::error::RecvError),
+
+    #[error(
+        "Error: unsupported tag, detail: {0}  (Error Code: {})",
+        OperatorErrorCodes::OP_UNSUPPORT_ERROR as u32
+    )]
+    OPUnsupportedTagError(String),
+
+    #[error(
+        "Error: Std io Error, detail: {0} (Error Code: {})",
+        OperatorErrorCodes::OP_IO_ERROR as u32
+    )]
+    OPIoError(#[from] std::io::Error),
+
+    #[error(
+        "Error: Veirfy Hub Error, detail: {0} (Error Code: {})",
+        OperatorErrorCodes::OP_VERIFYHUB_ERROR as u32
+    )]
+    OPVerifyHubError(#[from] VerifyHubError),
+
+    #[error(
+        "Error: Timeout Error, detail: {0} (Error Code: {})",
+        OperatorErrorCodes::OP_TIMEOUT_ERROR as u32
+    )]
+    OPTimeoutError(String),
+
+    #[error("Error: serde_json error: {0}")]
+    JsonError(#[from] serde_json::Error),
+
+    #[error("Error: Websocket error: {0}")]
+    OPWsError(#[from] websocket::WsError),
+
+    #[error("Error: Parse Int error: {0}")]
+    OPParseIntError(#[from] std::num::ParseIntError),
+
+    #[error("Error: parse hex string error: {0}")]
+    OPFromHexError(#[from] hex::FromHexError),
 }

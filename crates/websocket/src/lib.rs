@@ -222,7 +222,7 @@ impl WebsocketSender {
         let timeout_at = tokio::time::Instant::now() + timeout;
         use futures::sink::SinkExt;
 
-        let (s, id) = WireMessage::request(f, s, self.signer().unwrap())?;
+        let (s, id) = WireMessage::request(f, s, self.signer()?)?;
 
         /// Drop helper to remove our response callback if we timeout.
         struct D(CallbackMap, String);
