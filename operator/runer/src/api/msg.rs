@@ -10,6 +10,7 @@ use std::collections::HashMap;
 // 	"method": "connect",
 // 	"params": [{
 // 			"operator": "",
+// 			"workers": ["opml"] // opml, tee, zkml
 // 			"hash": "",
 // 			"signature": "", }], "address": "",
 // 	"hash": "",
@@ -24,6 +25,7 @@ pub struct ConnectRequest(pub Vec<ConnectParam>);
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ConnectParam {
     pub operator: String,
+    pub workers: Vec<String>,
     pub hash: String,
     pub signature: String,
 }

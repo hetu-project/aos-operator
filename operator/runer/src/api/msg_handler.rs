@@ -8,6 +8,7 @@ use alloy::{primitives::Address, signers::local::PrivateKeySigner};
 use alloy_wrapper::contracts::vrf_range;
 use ed25519_dalek::{Digest, Sha512};
 use hex::FromHex;
+use node_api::config::NodeConfig;
 use serde_json::Value;
 use signer::msg_signer::MessageVerify;
 use std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::Arc};
@@ -53,12 +54,15 @@ const QUEUE_TOPIC: &str = "task";
 /// - The JSON serialization of the request fails.
 /// - The WebSocket request times out or fails to send.
 /// - The JSON deserialization of the response fails.
-pub async fn connect_dispatcher(sender: &WebsocketSender, node_id: &str) -> OperatorResult<()> {
+pub async fn connect_dispatcher(sender: &WebsocketSender, node: &NodeConfig) -> OperatorResult<()> {
+    let node_id = node.node_id.as_str();
+    let node_type = node.node_type.clone();
     let res = sender
         .request_timeout(
             "connect".to_string(),
             serde_json::json!(&ConnectRequest(vec![ConnectParam {
                 operator: node_id.to_owned(),
+                workers: vec![node_type],
                 hash: "".to_owned(),
                 signature: "".to_owned(),
             }])),
@@ -163,7 +167,7 @@ async fn do_opml_job(
             ));
         }
 
-        let status = match get_worker_status().await {
+        let status = match get_opml_worker_status().await {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(
@@ -276,6 +280,41 @@ async fn do_tee_job(
     max_tokens: u64,
     clock: &HashMap<String, String>,
 ) -> OperatorResult<JobResultRequest> {
+    let mut retry_send_count = 0;
+    loop {
+        if retry_send_count >= 600 {
+            return Err(OperatorError::OPTimeoutError(
+                "opml question timeout".into(),
+            ));
+        }
+
+        let status = match get_tee_worker_status().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    "get tee worker status error: {:?}, retry count{}",
+                    e,
+                    retry_send_count
+                );
+                retry_send_count += 1;
+                sleep(Duration::from_millis(10000)).await;
+                continue;
+            }
+        };
+
+        tracing::info!(
+            "tee worker status: {:?}, retry count:{}",
+            status,
+            retry_send_count
+        );
+        if status > 0 {
+            break;
+        }
+
+        sleep(Duration::from_millis(10000)).await;
+        retry_send_count += 1;
+    }
+
     let tee_request = OperatorReq {
         request_id: Uuid::new_v4().to_string(),
         node_id: "".to_string(),
@@ -445,6 +484,7 @@ async fn do_job(
     op: OperatorArc,
 ) -> OperatorResult<()> {
     let config = op.lock().await.config.clone();
+    let node_type = config.node.node_type.clone();
     let state = op
         .lock()
         .await
@@ -466,7 +506,36 @@ async fn do_job(
         compute_vrf(op, params.tag.clone(), position, params.job.prompt.clone()).await?;
     tracing::info!("vrf result: {:?}", vrf_result);
 
-    let mut res = if vrf_result.selected == false {
+    let mut res = if msg.0[0].job.tag != node_type {
+        tracing::warn!("unsupported operator : {:?}", msg.0[0].job.tag);
+
+        let mut key_value_vec: Vec<(&String, &String)> = params.clock.iter().collect();
+        let (clk_id, clk_val) = key_value_vec
+            .pop()
+            .map(|(id, val)| (id.as_str(), val))
+            .ok_or(OperatorError::CustomError("Clock value missing".into()))?;
+
+        JobResultRequest(vec![JobResultParam {
+            user,
+            job_id,
+            tag: params.tag.clone(),
+            result: format!(
+                "unsupported worker type, need {}, got {}",
+                node_type, msg.0[0].job.tag
+            ),
+            vrf: vrf_result,
+            clock: HashMap::from([(
+                clk_id.to_owned(),
+                clk_val
+                    .parse::<u32>()?
+                    .checked_add(1)
+                    .ok_or(OperatorError::CustomError("checked_add error".into()))?
+                    .to_string(),
+            )]),
+            operator: "".to_owned(),
+            signature: "".to_owned(),
+        }])
+    } else if vrf_result.selected == false {
         let mut key_value_vec: Vec<(&String, &String)> = params.clock.iter().collect();
         let (clk_id, clk_val) = key_value_vec
             .pop()
@@ -606,43 +675,29 @@ async fn handle_dispatchjobs(
                         }
                     };
 
-                    if job.0[0].job.tag != node_type {
-                        tracing::warn!("unsupported operator : {:?}", job.0[0].job.tag);
-                    } else {
-                        let op = operator.clone();
-                        let sender_clone = sender.clone();
+                    let op = operator.clone();
+                    let sender_clone = sender.clone();
 
-                        if let Err(e) = do_job(job, sender_clone, op).await {
-                            match e {
-                                OperatorError::CustomError(e) => tracing::error!(
-                                    "Failed to finish Job: {}, error: {:?}",
-                                    m.id,
-                                    e
-                                ),
-                                OperatorError::OPIoError(e) => tracing::error!(
-                                    "Failed to finish Job: {}, error: {:?}",
-                                    m.id,
-                                    e
-                                ),
-                                OperatorError::OPUnsupportedTagError(e) => tracing::error!(
-                                    "Failed to finish Job: {}, error: {:?}",
-                                    m.id,
-                                    e
-                                ),
-                                OperatorError::OPNewVrfRangeContractError(e) => tracing::error!(
-                                    "Failed to finish Job: {}, error: {:?}",
-                                    m.id,
-                                    e
-                                ),
+                    if let Err(e) = do_job(job, sender_clone, op).await {
+                        match e {
+                            OperatorError::CustomError(e) => {
+                                tracing::error!("Failed to finish Job: {}, error: {:?}", m.id, e)
+                            }
+                            OperatorError::OPIoError(e) => {
+                                tracing::error!("Failed to finish Job: {}, error: {:?}", m.id, e)
+                            }
+                            OperatorError::OPUnsupportedTagError(e) => {
+                                tracing::error!("Failed to finish Job: {}, error: {:?}", m.id, e)
+                            }
+                            OperatorError::OPNewVrfRangeContractError(e) => {
+                                tracing::error!("Failed to finish Job: {}, error: {:?}", m.id, e)
+                            }
 
-                                OperatorError::OPVerifyHubError(e) => tracing::error!(
-                                    "Failed to finish Job: {}, error: {:?}",
-                                    m.id,
-                                    e
-                                ),
-                                _e => {
-                                    tracing::error!("Failed to finish Job: {}, error: {}", m.id, _e)
-                                }
+                            OperatorError::OPVerifyHubError(e) => {
+                                tracing::error!("Failed to finish Job: {}, error: {:?}", m.id, e)
+                            }
+                            _e => {
+                                tracing::error!("Failed to finish Job: {}, error: {}", m.id, _e)
                             }
                         }
                     }
@@ -772,7 +827,7 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
                     }
                 });
 
-                if let Err(e) = connect_dispatcher(&sender, config.node.node_id.as_str()).await {
+                if let Err(e) = connect_dispatcher(&sender, &config.node).await {
                     tracing::error!("connect server got error: {:?}", e);
                     break;
                 }
@@ -811,7 +866,7 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
     Ok(())
 }
 
-async fn get_worker_status() -> OperatorResult<String> {
+async fn get_opml_worker_status() -> OperatorResult<String> {
     tracing::info!("Sending opml status request");
     let client = reqwest::Client::new();
     let opml_server_url = format!("{}/api/v1/status", "http://127.0.0.1:1234");
@@ -832,6 +887,31 @@ async fn get_worker_status() -> OperatorResult<String> {
     } else {
         Err(OperatorError::CustomError(
             format!("Opml server responded with status: {}", response.status()).into(),
+        ))
+    }
+}
+
+async fn get_tee_worker_status() -> OperatorResult<u32> {
+    tracing::info!("Sending tee status request");
+    let client = reqwest::Client::new();
+    let tee_server_url = format!("{}/api/v1/status", "http://127.0.0.1:3000");
+    tracing::info!("{:?}", tee_server_url);
+
+    let response = client.get(tee_server_url).send().await?;
+    tracing::info!("{:?}", response);
+
+    if response.status().is_success() {
+        let body = response.text().await?;
+        let parsed: Value = serde_json::from_str(&body)?;
+        tracing::info!("body {:?}", parsed);
+        let msg = parsed
+            .get("remain_task")
+            .ok_or(OperatorError::CustomError("parse msg error".into()))?;
+        tracing::info!("remain_task = {:?}", msg);
+        return Ok(serde_json::from_value::<u32>(msg.clone())?);
+    } else {
+        Err(OperatorError::CustomError(
+            format!("Tee server responded with status: {}", response.status()).into(),
         ))
     }
 }

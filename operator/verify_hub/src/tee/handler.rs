@@ -37,6 +37,8 @@ pub async fn tee_question_handler(
         server.tee_channels.insert(request_id.clone(), tx);
     }
 
+    tracing::info!("Waiting for TEE answer, req_id: {}", request_id);
+
     // Poll the database for the answer
     match tokio::time::timeout(Duration::from_secs(600), rx.recv()).await {
         Ok(Some(answer)) => Ok(answer),
