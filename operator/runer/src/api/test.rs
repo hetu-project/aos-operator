@@ -82,7 +82,7 @@ async fn test() {
 
         let mut map = std::collections::HashMap::new();
         map.insert("1".to_string(), "2".to_owned());
-        for i in (1..=10) {
+        for i in (1..=1) {
             let _res = send
                 .request_timeout(
                     String::from_str("dispatch_job").unwrap(),
@@ -95,14 +95,15 @@ async fn test() {
                         position: "before".to_owned(),
                         job_id: String::from_str("100").unwrap(),
                         job: Job {
-                            model: String::from_str("2").unwrap(),
+                            model: String::from_str("1l_average").unwrap(),
                             prompt: String::from_str("what's AI?").unwrap()
                                 + i.to_string().as_str(),
-                            tag: "opml".to_owned(),
+                            tag: "zkml".to_owned(),
                             params: JobParams {
                                 temperature: 1.0,
                                 top_p: 5.0,
                                 max_tokens: 100,
+                                proof_path: "https://raw.githubusercontent.com/d5c5ceb0/t/main/proof.json".to_string()
                             },
                         },
                     }]))

@@ -31,6 +31,7 @@ pub struct DbConfig {
 #[derive(Clone, Deserialize, Serialize, Debug, Default)]
 pub struct QConfig {
     pub queue_url: String,
+    pub topic: String,
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug, Default)]

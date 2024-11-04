@@ -22,6 +22,10 @@ use verify_hub::{
         handler::opml_question_handler,
         model::{OpmlAnswer, OpmlRequest},
     },
+    zkml::{
+        handler::zkml_question_handler,
+        model::{ZkmlAnswer, ZkmlRequest},
+    },
     server::server::SharedState,
     tee::{
         handler::tee_question_handler,
@@ -30,7 +34,6 @@ use verify_hub::{
 };
 use websocket::{connect, ReceiveMessage, WebsocketConfig, WebsocketSender};
 
-const QUEUE_TOPIC: &str = "task";
 
 /// Asynchronously connects to a dispatcher using the given WebSocket sender and node ID.
 ///
@@ -366,6 +369,65 @@ async fn do_tee_job(
     }]))
 }
 
+async fn do_zkml_job(
+    state: SharedState,
+    model: String,
+    proof_path: String,
+    user: String,
+    job_id: String,
+    tag: String,
+    callback: String,
+    clock: &HashMap<String, String>,
+    vrf_result: VRFReply
+) -> OperatorResult<JobResultRequest> {
+
+    let zkml_request = ZkmlRequest {
+        model,
+        req_id: Uuid::new_v4().to_string(),
+        callback,
+        proof_path
+    };
+
+    let worker_result: ZkmlAnswer = match zkml_question_handler(state, zkml_request).await {
+        Ok(result) => result,
+        Err(VerifyHubError::RequestTimeoutError) => {
+            return Err(OperatorError::OPTimeoutError(
+                "zkml question timeout".into(),
+            ));
+        }
+        Err(e) => return Err(OperatorError::OPVerifyHubError(e)),
+    };
+
+    tracing::info!("{:?}", worker_result);
+
+    let mut key_value_vec: Vec<(&String, &String)> = clock.iter().collect();
+    let (clk_id, clk_val) = key_value_vec
+        .pop()
+        .map(|(id, val)| (id.as_str(), val))
+        .ok_or(OperatorError::CustomError(
+            "opml clock value missing".into(),
+        ))?;
+
+    Ok(JobResultRequest(vec![JobResultParam {
+        user,
+        job_id,
+        tag,
+        //result: worker_result.answer[..=worker_result.answer.rfind('.').unwrap()].to_string(),
+        result: worker_result.result, //worker_result.answer,
+        vrf: vrf_result,
+        clock: HashMap::from([(
+            clk_id.to_owned(),
+            clk_val
+                .parse::<u32>()?
+                .checked_add(1)
+                .ok_or(OperatorError::CustomError("checked_add error".into()))?
+                .to_string(),
+        )]),
+        operator: "".to_owned(),
+        signature: "".to_owned(),
+    }]))
+}
+
 /// Asynchronously computes a Verifiable Random Function (VRF) reply based on given parameters.
 ///
 /// This function locks the operator state to obtain configuration, contract, and VRF key information.
@@ -587,9 +649,23 @@ async fn do_job(
                     user,
                     job_id,
                     params.tag.clone(),
-                    params.job.params.temperature,
-                    params.job.params.top_p,
-                    params.job.params.max_tokens,
+                    params.job.params.temperature.unwrap(),
+                    params.job.params.top_p.unwrap(),
+                    params.job.params.max_tokens.unwrap(),
+                    &params.clock,
+                    vrf_result
+                )
+                .await?
+            }
+            "zkml" => {
+                do_zkml_job(
+                    state,
+                    params.job.model.to_owned(),
+                    params.job.params.proof_path.as_ref().unwrap().to_string(),
+                    user,
+                    job_id,
+                    params.tag.clone(),
+                    config.net.callback_url.clone(),
                     &params.clock,
                     vrf_result
                 )
@@ -645,8 +721,9 @@ async fn handle_dispatchjobs(
     let config = operator.lock().await.config.clone();
     let node_type = config.node.node_type.clone();
 
+    let queue_topic = &config.queue.topic.as_str();
     loop {
-        match queue.consume(QUEUE_TOPIC).await {
+        match queue.consume(queue_topic).await {
             Ok(msgs) => {
                 for (_k, m) in msgs.iter().enumerate() {
                     //Deserialize data
@@ -654,7 +731,7 @@ async fn handle_dispatchjobs(
                         Ok(parsed) => parsed,
                         Err(e) => {
                             tracing::error!("Failed to parse message: {}, error: {:?}", m.data, e);
-                            if let Err(e) = queue.acknowledge(QUEUE_TOPIC, &m.id).await {
+                            if let Err(e) = queue.acknowledge(queue_topic, &m.id).await {
                                 tracing::error!(
                                     "Failed to acknowledge message: {}, error: {:?}",
                                     m.id,
@@ -671,7 +748,7 @@ async fn handle_dispatchjobs(
                         Ok(parsed_job) => parsed_job,
                         Err(e) => {
                             tracing::error!("Failed to parse job, error: {:?}", e);
-                            if let Err(e) = queue.acknowledge(QUEUE_TOPIC, &m.id).await {
+                            if let Err(e) = queue.acknowledge(queue_topic, &m.id).await {
                                 tracing::error!(
                                     "Failed to acknowledge message: {}, error: {:?}",
                                     m.id,
@@ -710,7 +787,7 @@ async fn handle_dispatchjobs(
                     }
 
                     // ack
-                    if let Err(e) = queue.acknowledge(QUEUE_TOPIC, &m.id).await {
+                    if let Err(e) = queue.acknowledge(queue_topic, &m.id).await {
                         tracing::error!("Failed to acknowledge message: {}, error: {:?}", m.id, e);
                     }
                 }
@@ -797,6 +874,7 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
             Ok((sender, mut receiver)) => {
                 retry_count = 0;
                 let queue_clone = queue.clone();
+                let topic = config.queue.topic.clone();
 
                 let mut r_task = tokio::task::spawn(async move {
                     loop {
@@ -812,7 +890,7 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
                                         match m.as_str() {
                                             "dispatch_job" => {
                                                 sleep(Duration::from_millis(10)).await;
-                                                add_queue_req(&queue_clone, id, p).await;
+                                                add_queue_req(&queue_clone, &topic, id, p).await;
                                             }
                                             method @ &_ => {
                                                 tracing::warn!(
@@ -933,7 +1011,7 @@ async fn get_tee_worker_status() -> OperatorResult<u32> {
     }
 }
 
-async fn add_queue_req(queue_clone: &RedisStreamPool, id: String, p: Value) -> OperatorResult<()> {
+async fn add_queue_req(queue_clone: &RedisStreamPool, topic: &str, id: String, p: Value) -> OperatorResult<()> {
     let redis_msg = match RedisMessage::new((id, p)) {
         Ok(v) => v,
         Err(e) => {
@@ -942,7 +1020,7 @@ async fn add_queue_req(queue_clone: &RedisStreamPool, id: String, p: Value) -> O
         }
     };
     tracing::info!("Product message: data={:?}", redis_msg);
-    if let Err(e) = queue_clone.produce(QUEUE_TOPIC, &redis_msg).await {
+    if let Err(e) = queue_clone.produce(topic, &redis_msg).await {
         tracing::error!("redis queue produce error: {:?}", e);
         return Err(OperatorError::CustomError(
             "redis queue produce error".into(),

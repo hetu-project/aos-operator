@@ -52,7 +52,8 @@ pub struct ConnectParam {
 // 				"params": {
 // 					"temperature": 1.0,
 // 					"top_p": 0.5,
-// 					"max_tokens": 1024
+// 					"max_tokens": 1024,
+// 					"proof_path": ""
 // 				}
 // 		}
 // 	}],
@@ -89,9 +90,10 @@ pub struct Job {
 // Represents the parameters for a job
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JobParams {
-    pub temperature: f64,
-    pub top_p: f64,
-    pub max_tokens: u64,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub max_tokens: Option<u64>,
+    pub proof_path: Option<String>,
 }
 
 // Represents a job result request containing a vector of JobResultParam
@@ -104,6 +106,7 @@ pub struct JobParams {
 //			"job_id": "",
 //			"tag": "suspicion",
 //			"result": "",
+//			"reason": "",
 //			"clock": {
 //				"1": "2"
 //			},

@@ -8,6 +8,7 @@ db:
 queue:
   # "13.215.49.139:3000"
   queue_url: "redis://:@127.0.0.1:6379/"
+  topic: "task"
 net:
   rest_url: "0.0.0.0:21001"
   outer_url: "http://127.0.0.1:8080"
