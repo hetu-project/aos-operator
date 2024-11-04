@@ -1,4 +1,6 @@
 use super::{msg::*, vrf_key::VRFReply};
+use tracing_futures::Instrument;
+use std::thread;
 use crate::{
     error::{OperatorError, OperatorResult},
     operator::OperatorArc,
@@ -158,6 +160,7 @@ async fn do_opml_job(
     tag: String,
     callback: String,
     clock: &HashMap<String, String>,
+    vrf_result: VRFReply
 ) -> OperatorResult<JobResultRequest> {
     let mut retry_send_count = 0;
     loop {
@@ -225,7 +228,7 @@ async fn do_opml_job(
         tag,
         //result: worker_result.answer[..=worker_result.answer.rfind('.').unwrap()].to_string(),
         result: worker_result.answer,
-        vrf: VRFReply::default(),
+        vrf: vrf_result,
         clock: HashMap::from([(
             clk_id.to_owned(),
             clk_val
@@ -279,6 +282,7 @@ async fn do_tee_job(
     top_p: f64,
     max_tokens: u64,
     clock: &HashMap<String, String>,
+    vrf_result: VRFReply
 ) -> OperatorResult<JobResultRequest> {
     let mut retry_send_count = 0;
     loop {
@@ -348,7 +352,7 @@ async fn do_tee_job(
         job_id,
         tag,
         result: worker_result.answer,
-        vrf: VRFReply::default(),
+        vrf: vrf_result,
         clock: HashMap::from([(
             clk_id.to_owned(),
             clk_val
@@ -402,7 +406,7 @@ async fn compute_vrf(
         .await
         .map(|(x, y)| (x as f64, y as f64))?;
 
-    tracing::info!("vrf range: start-{start:?}, end-{end:?}");
+    tracing::info!("vrf range: addr-{addr}, start-{start:?}, end-{end:?}");
 
     //TODO Mock
     //let max_range = vrf_range::get_max_range(contract).await? as f64;
@@ -448,7 +452,7 @@ async fn compute_vrf(
         .map(|byte| format!("{:02x}", byte))
         .collect();
 
-    Ok(vrf_key.run_vrf(vrf_prompt_hash, vrf_precision, vrf_threshold)?)
+    Ok(vrf_key.run_vrf(vrf_prompt_hash, vrf_precision, vrf_threshold, max_range as u64)?)
 }
 
 /// Asynchronously performs a job dispatch process using the given parameters.
@@ -571,6 +575,7 @@ async fn do_job(
                     params.tag.clone(),
                     config.net.callback_url.clone(),
                     &params.clock,
+                    vrf_result
                 )
                 .await?
             }
@@ -586,6 +591,7 @@ async fn do_job(
                     params.job.params.top_p,
                     params.job.params.max_tokens,
                     &params.clock,
+                    vrf_result
                 )
                 .await?
             }
@@ -603,6 +609,7 @@ async fn do_job(
         )
         .await;
 
+    tracing::info!("-->job_result: {:?}", &res);
     if let Err(e) = job_result(&sender, serde_json::json!(&res)).await {
         tracing::error!("send job_result got error: {:?}", e);
     }
@@ -739,6 +746,8 @@ async fn handle_dispatchjobs(
 /// # Returns
 /// - `OperatorResult<()>`: Returns `Ok(())` if the loop completes successfully, or an error variant if any operation fails.
 pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
+    let mut id:i32 = 0;
+
     let config = op.lock().await.config.clone();
     let queue = match RedisStreamPool::new(&config.queue.queue_url).await {
         Ok(v) => v,
@@ -751,6 +760,9 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
     let retry_max = 8;
 
     loop {
+        id+=1;
+        let task_span = tracing::span!(tracing::Level::INFO, "task", task_id = id);
+        let _enter =  task_span.enter();
         let key_bytes = match <[u8; 32]>::from_hex(&config.node.signer_key) {
             Ok(v) => v,
             Err(e) => {
@@ -780,10 +792,12 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
                 ));
             }
         };
+
         match connect(Arc::new(WebsocketConfig::default()), socket, signer).await {
             Ok((sender, mut receiver)) => {
                 retry_count = 0;
                 let queue_clone = queue.clone();
+
                 let r_task = tokio::task::spawn(async move {
                     loop {
                         match receiver.recv().await {
@@ -825,7 +839,7 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
                             }
                         }
                     }
-                });
+                }.instrument(task_span.clone()));
 
                 if let Err(e) = connect_dispatcher(&sender, &config.node).await {
                     tracing::error!("connect server got error: {:?}", e);
@@ -836,7 +850,7 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
                 let queue_cl = queue.clone();
                 let s_task = tokio::task::spawn(async move {
                     handle_dispatchjobs(_operator_clone, sender, queue_cl).await;
-                });
+                }.instrument(task_span.clone()));
 
                 tokio::select! {
                         result = s_task =>match result {

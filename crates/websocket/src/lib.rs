@@ -34,8 +34,8 @@ pub enum WsError {
     #[error("Error: Channel recv error: {0}")]
     ChannelError(#[from] tokio::sync::oneshot::error::RecvError),
 
-    #[error("Error: websocket Closed")]
-    WebsocketClosed,
+    #[error("Error: websocket Closed: {0}")]
+    WebsocketClosed(String),
 
     #[error("Error: websocket receiver Closed")]
     ReceiverClosed,
@@ -462,7 +462,7 @@ impl WsCoreSync {
     {
         let core = match self.0.lock().unwrap().as_ref() {
             Some(core) => core.clone(),
-            None => return Err(WsError::WebsocketClosed),
+            None => return Err(WsError::WebsocketClosed("exec core is None".into())),
         };
         self.close_if_err(c(self.clone(), core).await)
     }
@@ -470,7 +470,7 @@ impl WsCoreSync {
     pub fn signer(&self) -> Result<MessageVerify, WsError> {
         let core = match self.0.lock().unwrap().as_ref() {
             Some(core) => core.clone(),
-            None => return Err(WsError::WebsocketClosed),
+            None => return Err(WsError::WebsocketClosed("signer core is None".into())),
         };
         Ok(core.signer)
     }

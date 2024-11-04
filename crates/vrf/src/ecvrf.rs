@@ -320,6 +320,7 @@ impl TryFrom<&[u8]> for Proof {
 }
 
 /// The ECVRF output produced from the proof
+#[derive(Debug)]
 pub struct Output([u8; OUTPUT_LENGTH]);
 
 impl Output {
