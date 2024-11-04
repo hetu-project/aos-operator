@@ -798,7 +798,7 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
                 retry_count = 0;
                 let queue_clone = queue.clone();
 
-                let r_task = tokio::task::spawn(async move {
+                let mut r_task = tokio::task::spawn(async move {
                     loop {
                         match receiver.recv().await {
                             Ok(msg) => {
@@ -848,19 +848,22 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
 
                 let _operator_clone = op.clone();
                 let queue_cl = queue.clone();
-                let s_task = tokio::task::spawn(async move {
+                let mut s_task = tokio::task::spawn(async move {
                     handle_dispatchjobs(_operator_clone, sender, queue_cl).await;
                 }.instrument(task_span.clone()));
 
                 tokio::select! {
-                        result = s_task =>match result {
+                        result = &mut s_task =>match result {
                               Ok(val) => tracing::info!("Task 1 completed successfully with result: {:?}", val),
                               Err(e) => break,
                         },
 
-                        result = r_task =>match result {
+                        result = &mut r_task =>match result {
                               Ok(val) => tracing::info!("Task 2 completed successfully with result: {:?}", val),
-                              Err(e) => tracing::info!("task 2 error {:?}", e),
+                              Err(e) => {
+                                  tracing::info!("task 2 error {:?}", e);
+                                  s_task.abort();
+                              }
                         },
                 }
             }

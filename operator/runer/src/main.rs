@@ -34,12 +34,13 @@ async fn async_main() {
         .with_line_number(true)
         .with_ansi(false);
 
-    let subscriber =  tracing_subscriber::registry()
+    tracing_subscriber::registry()
         .with(EnvFilter::new(rust_log))
         .with(stdout_layer)
-        .with(file_layer);
+        .with(file_layer)
+        .init();
 
-    tracing::subscriber::set_global_default(subscriber).expect("subscrib failed");
+    //tracing::subscriber::set_global_default(subscriber).expect("subscrib failed");
 
 
     info!("start operator server");
