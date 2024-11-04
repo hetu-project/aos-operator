@@ -231,6 +231,7 @@ async fn do_opml_job(
         tag,
         //result: worker_result.answer[..=worker_result.answer.rfind('.').unwrap()].to_string(),
         result: worker_result.answer,
+        reason: "".to_string(),
         vrf: vrf_result,
         clock: HashMap::from([(
             clk_id.to_owned(),
@@ -355,6 +356,7 @@ async fn do_tee_job(
         job_id,
         tag,
         result: worker_result.answer,
+        reason: "".to_string(),
         vrf: vrf_result,
         clock: HashMap::from([(
             clk_id.to_owned(),
@@ -414,6 +416,7 @@ async fn do_zkml_job(
         tag,
         //result: worker_result.answer[..=worker_result.answer.rfind('.').unwrap()].to_string(),
         result: worker_result.result, //worker_result.answer,
+        reason: "".to_string(),
         vrf: vrf_result,
         clock: HashMap::from([(
             clk_id.to_owned(),
@@ -589,6 +592,10 @@ async fn do_job(
                 "unsupported worker type, need {}, got {}",
                 node_type, msg.0[0].job.tag
             ),
+            reason: format!(
+                "unsupported worker type, need {}, got {}",
+                node_type, msg.0[0].job.tag
+            ),
             vrf: vrf_result,
             clock: HashMap::from([(
                 clk_id.to_owned(),
@@ -613,6 +620,7 @@ async fn do_job(
             job_id,
             tag: params.tag.clone(),
             result: "".to_owned(),
+            reason: "unselected worker by vrf".to_owned(),
             vrf: vrf_result,
             clock: HashMap::from([(
                 clk_id.to_owned(),
