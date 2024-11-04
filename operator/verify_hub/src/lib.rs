@@ -6,3 +6,4 @@ pub mod config;
 pub mod error;
 pub mod opml;
 pub mod tee;
+pub mod zkml;

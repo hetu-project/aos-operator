@@ -22,6 +22,8 @@ use crate::opml::handler::*;
 use crate::opml::model::{OpmlAnswer, OpmlRequest};
 use crate::tee::handler::*;
 use crate::tee::model::{AnswerReq, Operator, OperatorReq, OperatorResp, Params, WorkerStatus};
+use crate::zkml::handler::*;
+use crate::zkml::model::{ZkmlAnswer, ZkmlRequest};
 
 #[derive(Debug, Clone)]
 pub struct Server {
@@ -30,6 +32,7 @@ pub struct Server {
     //pub pg: Pool<ConnectionManager<PgConnection>>,
     pub tee_channels: HashMap<String, mpsc::Sender<AnswerReq>>,
     pub opml_channels: HashMap<String, mpsc::Sender<OpmlAnswer>>,
+    pub zkml_channels: HashMap<String, mpsc::Sender<ZkmlAnswer>>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +61,7 @@ impl Server {
             //pg,
             tee_channels: Default::default(),
             opml_channels: Default::default(),
+            zkml_channels: Default::default(),
         }
     }
 
@@ -96,7 +100,7 @@ impl Server {
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(format!("OPML server responded with status: {}", response.status()).into())
+            Err(format!("Tee server responded with status: {}", response.status()).into())
         }
     }
 
@@ -110,6 +114,45 @@ impl Server {
         tracing::info!("{:?}", opml_server_url);
 
         let response = client.post(opml_server_url).json(&req).send().await?;
+        tracing::info!("{:?}", response);
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!("Tee server responded with status: {}", response.status()).into())
+        }
+    }
+
+    pub async fn send_zkml_request(
+        &self,
+        req: ZkmlRequest,
+    ) -> Result<ZkmlAnswer, Box<dyn std::error::Error>> {
+        tracing::info!("Sending zkml request {:?}", req);
+        let client = reqwest::Client::new();
+        let zkml_server_url = format!("{}/api/v1/verify", "http://127.0.0.1:3721");
+        tracing::info!("{:?}", zkml_server_url);
+
+        let response = client.post(zkml_server_url).json(&req).send().await?;
+        tracing::info!("{:?}", response);
+
+        if response.status().is_success() {
+            let json_body: ZkmlAnswer = response.json().await?;
+            Ok(json_body)
+        } else {
+            Err(format!("Tee server responded with status: {}", response.status()).into())
+        }
+    }
+
+    pub async fn send_zkml_request_callback(
+        &self,
+        req: ZkmlRequest,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        tracing::info!("Sending zkml request {:?}", req);
+        let client = reqwest::Client::new();
+        let zkml_server_url = format!("{}/api/v1/verify", "http://127.0.0.1:3721");
+        tracing::info!("{:?}", zkml_server_url);
+
+        let response = client.post(zkml_server_url).json(&req).send().await?;
         tracing::info!("{:?}", response);
 
         if response.status().is_success() {
@@ -143,6 +186,7 @@ pub async fn run(url: &str, tx: tokio::sync::oneshot::Sender<SharedState>) {
         .route("/receive_heart_beat", post(receive_heart_beat))
         .route("/api/tee_callback", post(tee_callback))
         .route("/api/opml_callback", post(opml_callback))
+        .route("/api/zkml_callback", post(zkml_callback))
         .layer(cors)
         .layer(
             ServiceBuilder::new()
