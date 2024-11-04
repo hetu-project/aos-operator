@@ -1,4 +1,5 @@
 use crate::operator::Operator;
+use std::ops::Rem;
 use crate::operator::OperatorArc;
 use alloy_wrapper::contracts::vrf_range;
 use node_api::error::OperatorAPIResult;
@@ -40,6 +41,7 @@ impl VRFPrivKey {
         vrf_prompt_hash: String,
         vrf_precision: usize,
         vrf_threshold: u64,
+        max_range: u64,
     ) -> Result<VRFReply, std::io::Error> {
         let public_key: VRFPublicKey = (&self.0).into();
         let proof: vrf::ecvrf::Proof = self.0.prove(vrf_prompt_hash.as_bytes());
@@ -49,8 +51,12 @@ impl VRFPrivKey {
         let random_num = hex::encode(output.to_bytes());
         let random_str = &random_num[start..end];
         let vrf_sampler = VRFSampler::new(vrf_precision * 4);
-        let random_bigint = vrf_sampler.hex_to_biguint(random_str);
-        println!("rand:{:?},{:?}", random_bigint, vrf_threshold);
+        //let random_bigint = vrf_sampler.hex_to_biguint(random_str).mod_floor(max_range.into());
+                let random_bigint = vrf_sampler
+                                .hex_to_biguint(random_str)
+                                            .rem(<u64 as Into<BigUint>>::into(max_range));
+
+        tracing::info!("rand:{:?},{:?},{:?}",output, random_bigint, vrf_threshold);
         let selected = vrf_sampler.meets_threshold(&random_bigint, &BigUint::from(vrf_threshold));
         Ok(VRFReply {
             selected,
