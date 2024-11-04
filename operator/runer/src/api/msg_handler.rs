@@ -1,6 +1,4 @@
 use super::{msg::*, vrf_key::VRFReply};
-use tracing_futures::Instrument;
-use std::thread;
 use crate::{
     error::{OperatorError, OperatorResult},
     operator::OperatorArc,
@@ -13,8 +11,10 @@ use hex::FromHex;
 use node_api::config::NodeConfig;
 use serde_json::Value;
 use signer::msg_signer::MessageVerify;
+use std::thread;
 use std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::time::{sleep, Duration};
+use tracing_futures::Instrument;
 use uuid::Uuid;
 use verify_hub::{
     error::VerifyHubError,
@@ -22,18 +22,17 @@ use verify_hub::{
         handler::opml_question_handler,
         model::{OpmlAnswer, OpmlRequest},
     },
-    zkml::{
-        handler::zkml_question_handler,
-        model::{ZkmlAnswer, ZkmlRequest},
-    },
     server::server::SharedState,
     tee::{
         handler::tee_question_handler,
         model::{AnswerReq, OperatorReq, Params},
     },
+    zkml::{
+        handler::zkml_question_handler,
+        model::{ZkmlAnswer, ZkmlRequest},
+    },
 };
 use websocket::{connect, ReceiveMessage, WebsocketConfig, WebsocketSender};
-
 
 /// Asynchronously connects to a dispatcher using the given WebSocket sender and node ID.
 ///
@@ -163,7 +162,7 @@ async fn do_opml_job(
     tag: String,
     callback: String,
     clock: &HashMap<String, String>,
-    vrf_result: VRFReply
+    vrf_result: VRFReply,
 ) -> OperatorResult<JobResultRequest> {
     let mut retry_send_count = 0;
     loop {
@@ -286,7 +285,7 @@ async fn do_tee_job(
     top_p: f64,
     max_tokens: u64,
     clock: &HashMap<String, String>,
-    vrf_result: VRFReply
+    vrf_result: VRFReply,
 ) -> OperatorResult<JobResultRequest> {
     let mut retry_send_count = 0;
     loop {
@@ -380,14 +379,13 @@ async fn do_zkml_job(
     tag: String,
     callback: String,
     clock: &HashMap<String, String>,
-    vrf_result: VRFReply
+    vrf_result: VRFReply,
 ) -> OperatorResult<JobResultRequest> {
-
     let zkml_request = ZkmlRequest {
         model,
         req_id: Uuid::new_v4().to_string(),
         callback,
-        proof_path
+        proof_path,
     };
 
     let worker_result: ZkmlAnswer = match zkml_question_handler(state, zkml_request).await {
@@ -517,7 +515,12 @@ async fn compute_vrf(
         .map(|byte| format!("{:02x}", byte))
         .collect();
 
-    Ok(vrf_key.run_vrf(vrf_prompt_hash, vrf_precision, vrf_threshold, max_range as u64)?)
+    Ok(vrf_key.run_vrf(
+        vrf_prompt_hash,
+        vrf_precision,
+        vrf_threshold,
+        max_range as u64,
+    )?)
 }
 
 /// Asynchronously performs a job dispatch process using the given parameters.
@@ -588,10 +591,7 @@ async fn do_job(
             user,
             job_id,
             tag: params.tag.clone(),
-            result: format!(
-                "unsupported worker type, need {}, got {}",
-                node_type, msg.0[0].job.tag
-            ),
+            result: "".to_string(),
             reason: format!(
                 "unsupported worker type, need {}, got {}",
                 node_type, msg.0[0].job.tag
@@ -645,7 +645,7 @@ async fn do_job(
                     params.tag.clone(),
                     config.net.callback_url.clone(),
                     &params.clock,
-                    vrf_result
+                    vrf_result,
                 )
                 .await?
             }
@@ -661,7 +661,7 @@ async fn do_job(
                     params.job.params.top_p.unwrap(),
                     params.job.params.max_tokens.unwrap(),
                     &params.clock,
-                    vrf_result
+                    vrf_result,
                 )
                 .await?
             }
@@ -675,7 +675,7 @@ async fn do_job(
                     params.tag.clone(),
                     config.net.callback_url.clone(),
                     &params.clock,
-                    vrf_result
+                    vrf_result,
                 )
                 .await?
             }
@@ -831,7 +831,7 @@ async fn handle_dispatchjobs(
 /// # Returns
 /// - `OperatorResult<()>`: Returns `Ok(())` if the loop completes successfully, or an error variant if any operation fails.
 pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
-    let mut id:i32 = 0;
+    let mut id: i32 = 0;
 
     let config = op.lock().await.config.clone();
     let queue = match RedisStreamPool::new(&config.queue.queue_url).await {
@@ -845,9 +845,9 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
     let retry_max = 8;
 
     loop {
-        id+=1;
+        id += 1;
         let task_span = tracing::span!(tracing::Level::INFO, "task", task_id = id);
-        let _enter =  task_span.enter();
+        let _enter = task_span.enter();
         let key_bytes = match <[u8; 32]>::from_hex(&config.node.signer_key) {
             Ok(v) => v,
             Err(e) => {
@@ -884,48 +884,52 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
                 let queue_clone = queue.clone();
                 let topic = config.queue.topic.clone();
 
-                let mut r_task = tokio::task::spawn(async move {
-                    loop {
-                        match receiver.recv().await {
-                            Ok(msg) => {
-                                tracing::info!("<--job request: msg={:?}", msg);
+                let mut r_task = tokio::task::spawn(
+                    async move {
+                        loop {
+                            match receiver.recv().await {
+                                Ok(msg) => {
+                                    tracing::info!("<--job request: msg={:?}", msg);
 
-                                match msg {
-                                    ReceiveMessage::Signal(s) => {
-                                        tracing::warn!("signal message: {s:?}")
-                                    }
-                                    ReceiveMessage::Request(id, m, p, r) => {
-                                        match m.as_str() {
-                                            "dispatch_job" => {
-                                                sleep(Duration::from_millis(10)).await;
-                                                add_queue_req(&queue_clone, &topic, id, p).await;
+                                    match msg {
+                                        ReceiveMessage::Signal(s) => {
+                                            tracing::warn!("signal message: {s:?}")
+                                        }
+                                        ReceiveMessage::Request(id, m, p, r) => {
+                                            match m.as_str() {
+                                                "dispatch_job" => {
+                                                    sleep(Duration::from_millis(10)).await;
+                                                    add_queue_req(&queue_clone, &topic, id, p)
+                                                        .await;
+                                                }
+                                                method @ &_ => {
+                                                    tracing::warn!(
+                                                        "Unexpected method value: {:?}",
+                                                        method
+                                                    )
+                                                }
+                                            };
+
+                                            let rep = serde_json::json!(WsResponse {
+                                                code: 200,
+                                                message: "success".to_string(),
+                                            });
+
+                                            if let Err(e) = r.respond(rep).await {
+                                                tracing::error!("Failed to send message: {:?}", e);
+                                                return;
                                             }
-                                            method @ &_ => {
-                                                tracing::warn!(
-                                                    "Unexpected method value: {:?}",
-                                                    method
-                                                )
-                                            }
-                                        };
-
-                                        let rep = serde_json::json!(WsResponse {
-                                            code: 200,
-                                            message: "success".to_string(),
-                                        });
-
-                                        if let Err(e) = r.respond(rep).await {
-                                            tracing::error!("Failed to send message: {:?}", e);
-                                            return;
                                         }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                panic!("websocket error {:?}, need reconnect", e);
+                                Err(e) => {
+                                    panic!("websocket error {:?}, need reconnect", e);
+                                }
                             }
                         }
                     }
-                }.instrument(task_span.clone()));
+                    .instrument(task_span.clone()),
+                );
 
                 if let Err(e) = connect_dispatcher(&sender, &config.node).await {
                     tracing::error!("connect server got error: {:?}", e);
@@ -934,9 +938,12 @@ pub async fn handle_connection(op: OperatorArc) -> OperatorResult<()> {
 
                 let _operator_clone = op.clone();
                 let queue_cl = queue.clone();
-                let mut s_task = tokio::task::spawn(async move {
-                    handle_dispatchjobs(_operator_clone, sender, queue_cl).await;
-                }.instrument(task_span.clone()));
+                let mut s_task = tokio::task::spawn(
+                    async move {
+                        handle_dispatchjobs(_operator_clone, sender, queue_cl).await;
+                    }
+                    .instrument(task_span.clone()),
+                );
 
                 tokio::select! {
                         result = &mut s_task =>match result {
@@ -1019,7 +1026,12 @@ async fn get_tee_worker_status() -> OperatorResult<u32> {
     }
 }
 
-async fn add_queue_req(queue_clone: &RedisStreamPool, topic: &str, id: String, p: Value) -> OperatorResult<()> {
+async fn add_queue_req(
+    queue_clone: &RedisStreamPool,
+    topic: &str,
+    id: String,
+    p: Value,
+) -> OperatorResult<()> {
     let redis_msg = match RedisMessage::new((id, p)) {
         Ok(v) => v,
         Err(e) => {
