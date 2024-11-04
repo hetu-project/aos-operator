@@ -127,6 +127,7 @@ pub struct JobResultParam {
     pub user: String,
     pub job_id: String,
     pub result: String,
+    pub reason: String,
     pub vrf: VRFReply,
     pub tag: String,
     pub clock: HashMap<String, String>,
